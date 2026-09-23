@@ -2,7 +2,7 @@
 
 **Obsidian vault notes in your Omarchy bar.** Read, edit, search, and manage Markdown notes without leaving your desktop.
 
-![Nether preview](preview.png)
+![Nether preview]<img width="924" height="1076" alt="screenshot-2026-09-22_21-47-56" src="https://github.com/user-attachments/assets/f205abdb-7bb5-4f31-9604-3dcd5a63bd5d" />
 
 ## Features
 
