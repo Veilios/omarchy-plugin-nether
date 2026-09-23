@@ -1,0 +1,17 @@
+# QML cache
+.qmlcache/
+*.qmlc
+
+# Test files
+test_*.qml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

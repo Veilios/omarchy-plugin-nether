@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "veilios.nether",
+  "name": "Nether",
+  "version": "1.0.0",
+  "author": "veilios",
+  "license": "MIT",
+  "description": "Read and edit notes from your Obsidian vault. Last-open note is restored across reboots.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Main.qml"
+  },
+  "barWidget": {
+    "displayName": "Nether",
+    "description": "Read and edit notes from your Obsidian vault in a bar panel. Remembers the last open note, autosaves edits, resets to read-only on note switch.",
+    "category": "Notes",
+    "defaultSection": "right",
+    "allowMultiple": false,
+    "defaults": {
+      "vaultPath": "~/Documents/Obsidian Vault"
+    },
+    "schema": [
+      {
+        "key": "vaultPath",
+        "type": "string",
+        "label": "Vault path (supports ~)",
+        "defaultValue": "~/Documents/Obsidian Vault"
+      }
+    ]
+  }
+}
