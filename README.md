@@ -10,7 +10,7 @@
 - **Full Markdown rendering** — Headers, lists, code blocks, blockquotes, tables, tasks
 - **Task support** — Toggle checkboxes inline (`- [ ]` / `- [x]`)
 - **Vault folder navigation** — Create, move, and organize notes by folder
-- **Search** — Fuzzy search across all notes (`Ctrl+S`)
+- **Search** — Fuzzy search across note names and full content (`Ctrl+S`)
 - **Auto-save** — Edits persist instantly; reverts to read-only on note switch
 - **Session restore** — Reopens your last note on login
 - **Keyboard-first** — Comprehensive hotkeys for power users
@@ -71,7 +71,7 @@ Configure via:
 | `Ctrl+X` | Delete note (read mode) |
 | `Ctrl+D` | Delete task (on completed task) |
 | `Ctrl+Enter` | Toggle edit / read-only |
-| `Ctrl+S` | Search notes |
+| `Ctrl+S` | Search notes (names + content) |
 | `Ctrl+M` | Move note |
 
 ### Section-Specific
@@ -115,6 +115,7 @@ Press `Hot Keys` button in Settings for the full categorized reference.
 - Omarchy (Quickshell-based shell)
 - Obsidian vault with `.md` files
 - Python 3.6+ (for secure vault processing)
+- ripgrep (`rg`) for full-text content search
 
 ## Security
 
