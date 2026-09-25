@@ -36,6 +36,8 @@ Panel {
   property var folderModel: []
   property bool creatingNewFolder: false
   property string newFolderDraft: ""
+  property bool contentSearchRunning: false
+  property int searchDebounceMs: 150
 
   function rebuildFolderModel() {
     var model = []
@@ -134,14 +136,93 @@ Panel {
     var q = noteSearch.trim().toLowerCase()
     if (q === "") {
       filteredNotes = notes
-    } else {
-      var result = []
-      for (var i = 0; i < notes.length; i++) {
-        var item = notes[i]
-        if (item.name.toLowerCase().indexOf(q) >= 0 || item.rel.toLowerCase().indexOf(q) >= 0)
-          result.push(item)
+      if (dropdownIndex >= filteredNotes.length) dropdownIndex = Math.max(0, filteredNotes.length - 1)
+      return
+    }
+    var result = []
+    for (var i = 0; i < notes.length; i++) {
+      var item = notes[i]
+      if (item.name.toLowerCase().indexOf(q) >= 0 || item.rel.toLowerCase().indexOf(q) >= 0) {
+        result.push({ rel: item.rel, folder: item.folder, name: item.name, matchType: "name", snippets: [] })
       }
-      filteredNotes = result
+    }
+    filteredNotes = result
+    if (dropdownIndex >= filteredNotes.length) dropdownIndex = Math.max(0, filteredNotes.length - 1)
+    searchDebounceTimer.restart()
+  }
+
+  function performContentSearch() {
+    var q = noteSearch.trim()
+    if (q.length < 2) return
+    contentSearchRunning = true
+    contentSearchProc.query = q
+    contentSearchProc.vault = vaultPath
+    contentSearchProc.running = true
+  }
+
+  function onContentSearchResults(output) {
+    contentSearchRunning = false
+    var lines = String(output).split("\n")
+    var contentMatches = {}
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim()
+      if (!line) continue
+      try {
+        var parsed = JSON.parse(line)
+        if (parsed.type === "match") {
+          var absPath = parsed.data.path
+          if (absPath.indexOf(vaultPath) === 0) {
+            var rel = absPath.slice(vaultPath.length + 1)
+            var snippet = parsed.data.lines.text.trim()
+            if (!contentMatches[rel]) contentMatches[rel] = []
+            if (contentMatches[rel].length < 3) {
+              contentMatches[rel].push({ line: parsed.data.line_number, text: snippet })
+            }
+          }
+        }
+      } catch (e) {}
+    }
+    mergeSearchResults(contentMatches)
+  }
+
+  function mergeSearchResults(contentMatches) {
+    var q = noteSearch.trim().toLowerCase()
+    if (q === "") {
+      filteredNotes = notes
+      if (dropdownIndex >= filteredNotes.length) dropdownIndex = Math.max(0, filteredNotes.length - 1)
+      return
+    }
+    var nameMatches = []
+    for (var i = 0; i < notes.length; i++) {
+      var item = notes[i]
+      var nameMatch = item.name.toLowerCase().indexOf(q) >= 0
+      var pathMatch = item.rel.toLowerCase().indexOf(q) >= 0
+      if (nameMatch || pathMatch) {
+        nameMatches.push(item.rel)
+        var existingIdx = filteredNotes.findIndex(function(x) { return x.rel === item.rel })
+        if (existingIdx >= 0) {
+          filteredNotes[existingIdx].matchType = "name"
+        } else {
+          filteredNotes.push({ rel: item.rel, folder: item.folder, name: item.name, matchType: "name", snippets: [] })
+        }
+      }
+    }
+    for (var rel in contentMatches) {
+      if (nameMatches.indexOf(rel) === -1) {
+        var note = null
+        for (var j = 0; j < notes.length; j++) {
+          if (notes[j].rel === rel) { note = notes[j]; break }
+        }
+        if (note) {
+          filteredNotes.push({ rel: note.rel, folder: note.folder, name: note.name, matchType: "content", snippets: contentMatches[rel] })
+        }
+      } else {
+        var idx = filteredNotes.findIndex(function(x) { return x.rel === rel })
+        if (idx >= 0) {
+          filteredNotes[idx].matchType = "both"
+          filteredNotes[idx].snippets = contentMatches[rel]
+        }
+      }
     }
     if (dropdownIndex >= filteredNotes.length) dropdownIndex = Math.max(0, filteredNotes.length - 1)
   }
@@ -842,6 +923,13 @@ function toggleTask(lineNo, wasChecked) {
     onTriggered: root.checkAutoDeleteTasks()
   }
 
+  Timer {
+    id: searchDebounceTimer
+    interval: root.searchDebounceMs
+    repeat: false
+    onTriggered: root.performContentSearch()
+  }
+
   Process {
     id: autoDeleteProc
     property string vault: ""
@@ -851,6 +939,20 @@ function toggleTask(lineNo, wasChecked) {
     }
     onExited: function(exitCode) {
       // noteFile has watchChanges: true, will auto-reload on external change
+    }
+  }
+
+  Process {
+    id: contentSearchProc
+    property string query: ""
+    property string vault: ""
+    command: {
+      return ["rg", "--json", "--no-heading", "--line-number", "--smart-case",
+              "--glob", "*.md", "--glob", "!.obsidian/**", query, vault]
+    }
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.onContentSearchResults(text)
     }
   }
 
@@ -1574,7 +1676,7 @@ if (event.key === Qt.Key_Space) {
             required property var modelData
             required property int index
             width: notesList.width
-            height: Style.space(26)
+            height: Style.space(34)
 
             Rectangle {
               anchors.fill: parent
@@ -1586,17 +1688,40 @@ if (event.key === Qt.Key_Space) {
                 : (rowMouse.containsMouse ? Style.hoverFillFor(root.bodyText, Color.accent) : "transparent")
             }
 
-            Text {
+            Row {
               anchors.left: parent.left
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
               anchors.leftMargin: Style.space(18)
               anchors.rightMargin: Style.space(8)
-              text: noteRow.modelData.name
-              elide: Text.ElideMiddle
-              color: index === root.dropdownIndex || noteRow.modelData.rel === root.currentNote ? Color.accent : root.bodyText
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
+              spacing: Style.space(6)
+
+              Text {
+                width: notesList.width * 0.5
+                text: noteRow.modelData.name
+                elide: Text.ElideMiddle
+                color: index === root.dropdownIndex || noteRow.modelData.rel === root.currentNote ? Color.accent : root.bodyText
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
+
+              Text {
+                visible: noteRow.modelData.matchType === "content" || noteRow.modelData.matchType === "both"
+                text: "📄"
+                color: root.dimText
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Text {
+                visible: noteRow.modelData.snippets && noteRow.modelData.snippets.length > 0
+                width: notesList.width * 0.45
+                text: noteRow.modelData.snippets[0].text
+                elide: Text.ElideRight
+                color: root.dimText
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
             }
 
             MouseArea {
