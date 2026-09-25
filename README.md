@@ -8,11 +8,9 @@
 
 - **Bar widget** — Click the icon to open a panel with your notes
 - **Full Markdown rendering** — Headers, lists, code blocks, blockquotes, tables, tasks
-- **Task support** — Toggle checkboxes inline (`- [ ]` / `- [x]`)
 - **Vault folder navigation** — Create, move, and organize notes by folder
 - **Search** — Fuzzy search across note names and full content (`Ctrl+S`)
 - **Auto-save** — Edits persist instantly; reverts to read-only on note switch
-- **Session restore** — Reopens your last note on login
 - **Keyboard-first** — Comprehensive hotkeys for power users
 
 ## Installation
@@ -101,13 +99,13 @@ Press `Hot Keys` button in Settings for the full categorized reference.
 
 ## Moving Notes
 
-1. Open note, press `Ctrl+M`
+1. Open note, and press `Ctrl+M`
 2. Select destination folder (or create new)
 3. Press `Move` or `→`
 
 ## Deleting Notes
 
-1. Open note in read mode, press `Ctrl+X`
+1. Open note in read mode, press `Ctrl+X` (sorry, I use blender)
 2. Confirm in dialog
 
 ## Requirements
@@ -116,12 +114,6 @@ Press `Hot Keys` button in Settings for the full categorized reference.
 - Obsidian vault with `.md` files
 - Python 3.6+ (for secure vault processing)
 - ripgrep (`rg`) for full-text content search
-
-## Security
-
-The auto-delete task feature (runs daily) processes `.md` files in your vault to remove completed tasks older than 24 hours. As of v1.1.0, this uses **descriptor-relative operations with `O_NOFOLLOW`** and **atomic writes** to prevent symlink-based path traversal attacks. Symlinks in the vault are safely ignored — they cannot be used to modify files outside the vault.
-
-A test suite in `tests/test_symlink_protection.py` validates this protection.
 
 ## License
 
