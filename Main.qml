@@ -846,33 +846,8 @@ function toggleTask(lineNo, wasChecked) {
     id: autoDeleteProc
     property string vault: ""
     command: {
-      var py = [
-        'import os, re, sys, datetime',
-        'vault = sys.argv[1]',
-        'now = datetime.datetime.now().timestamp()',
-        'day = 86400',
-        'task_re = re.compile(r"^(\\s*[-*+]\\s+\\[x\\]\\s+.*?)\\s*<!--\\s*completed:\\s*([^>\\s]+)\\s*-->")',
-        'for root, dirs, files in os.walk(vault):',
-        '    for f in files:',
-        '        if not f.endswith(".md"): continue',
-        '        path = os.path.join(root, f)',
-        '        with open(path, "r") as fp: lines = fp.readlines()',
-        '        out = []',
-        '        for line in lines:',
-        '            m = task_re.match(line.rstrip("\\n"))',
-        '            if m:',
-        '                ts_str = m.group(2)',
-        '                try:',
-        '                    ts = datetime.datetime.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp()',
-        '                    if now - ts <= day:',
-        '                        out.append(line)',
-        '                except:',
-        '                    out.append(line)',
-        '            else:',
-        '                out.append(line)',
-        '        with open(path, "w") as fp: fp.writelines(out)'
-      ]
-      return ["python3", "-c", py.join("\n"), vault]
+      var scriptPath = Qt.resolvedUrl("nether_auto_delete.py").toLocalFile()
+      return ["python3", scriptPath, vault]
     }
     onExited: function(exitCode) {
       // noteFile has watchChanges: true, will auto-reload on external change

@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "veilios.nether",
   "name": "Nether",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "veilios",
   "license": "MIT",
-  "description": "Read and edit notes from your Obsidian vault. Last-open note is restored across reboots.",
+  "description": "Read and edit notes from your Obsidian vault. Last-open note is restored across reboots. Secure symlink-resistant auto-delete.",
   "kinds": [
     "bar-widget"
   ],

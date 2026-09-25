@@ -1,0 +1,31 @@
+name: Security Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  security-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"
+
+      - name: Run security tests
+        run: |
+          cd ${{ github.workspace }}
+          python3 tests/test_symlink_protection.py
+
+      - name: Validate plugin manifest
+        run: |
+          echo "Manifest validation would run here if omarchy CLI available"
+
+      - name: Lint QML
+        run: |
+          echo "QML linting would run here if qmllint available"

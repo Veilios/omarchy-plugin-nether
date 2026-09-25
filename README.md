@@ -49,7 +49,6 @@ Configure via:
 ### Opening the Panel
 
 - Click the Nether icon in the bar
-- Press `Super+Space` → type "nether" → Enter
 - IPC: `omarchy-shell veilios.nether toggle`
 
 ### Navigation
@@ -98,7 +97,7 @@ Press `Hot Keys` button in Settings for the full categorized reference.
 1. Press `Ctrl+N` or click **New Note** in header
 2. Enter title
 3. Select folder (or create new with `+` button)
-3. Press `Create` or `→`
+4. Press `Create` or `→`
 
 ## Moving Notes
 
@@ -115,6 +114,13 @@ Press `Hot Keys` button in Settings for the full categorized reference.
 
 - Omarchy (Quickshell-based shell)
 - Obsidian vault with `.md` files
+- Python 3.6+ (for secure vault processing)
+
+## Security
+
+The auto-delete task feature (runs daily) processes `.md` files in your vault to remove completed tasks older than 24 hours. As of v1.1.0, this uses **descriptor-relative operations with `O_NOFOLLOW`** and **atomic writes** to prevent symlink-based path traversal attacks. Symlinks in the vault are safely ignored — they cannot be used to modify files outside the vault.
+
+A test suite in `tests/test_symlink_protection.py` validates this protection.
 
 ## License
 
