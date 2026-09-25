@@ -11,7 +11,7 @@
 - **Vault folder navigation** — Create, move, and organize notes by folder
 - **Search** — Fuzzy search across note names and full content (`Ctrl+S`)
 - **Auto-save** — Edits persist instantly; reverts to read-only on note switch
-- **Keyboard-first** — Comprehensive hotkeys for power users
+- **Keyboard Support** — The entire plugin is mostly navigable with just the keyboard, as dhh intended 
 
 ## Installation
 
