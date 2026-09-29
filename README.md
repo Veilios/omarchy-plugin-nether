@@ -112,8 +112,32 @@ Press `Hot Keys` button in Settings for the full categorized reference.
 
 - Omarchy (Quickshell-based shell)
 - Obsidian vault with `.md` files
-- Python 3.6+ (for secure vault processing)
 - ripgrep (`rg`) for full-text content search
+- `xdg-open`, to follow links in a note
+
+## IPC
+
+Nether registers a `veilios.nether` IPC target, reachable by any process
+running as your user via `omarchy-shell`:
+
+```bash
+omarchy-shell veilios.nether toggle
+omarchy-shell veilios.nether selectIndex 3
+omarchy-shell veilios.nether selectNote projects/plan.md
+omarchy-shell veilios.nether status
+```
+
+`selectNote` only accepts a path the vault scan actually produced and returns
+`unknown-note` for anything else, so the target cannot be used to read or write
+outside the vault. `status` deliberately does not report the vault path.
+
+## Limits
+
+Search and the note list are bounded, because both run inside the long-lived
+shell process. Content search caps matches per file, file size, directory depth,
+total output bytes and the number of files retained; the note list is capped at
+20,000 notes. When a cap is hit the panel says so rather than silently showing
+part of the result — narrow the search, or move the offending notes.
 
 ## License
 

@@ -17,6 +17,9 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Run path and link guard tests
+        run: node tests/test_pathguard.mjs
+
       - name: Validate plugin manifest
         run: |
           python3 - <<'PY'
@@ -33,4 +36,12 @@ jobs:
 
       - name: Lint QML
         run: |
-          echo "QML linting would run here if qmllint available"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qml6-module-* >/dev/null
+          status=0
+          for f in Main.qml NoteView.qml HotKeysPopup.qml; do
+            # --bare ignores unresolved imports (Quickshell and the shell's own
+            # modules are not packaged here) and fails only on real syntax.
+            if ! qmllint --bare "$f"; then status=1; fi
+          done
+          exit $status

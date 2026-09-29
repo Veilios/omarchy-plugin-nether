@@ -24,10 +24,41 @@ All notable changes to this project will be documented in this file.
     is still round-tripped, it is simply never swept up afterwards
 
 ### Security
-- Containment and input-validation hardening lands alongside the above:
-  unvalidated IPC path handling, the markdown link allowlist, shell settings
-  persistence via the shell's own API, and bounded content search. See the
-  individual entries below in subsequent releases.
+- Note paths and markdown links are validated in one place (`PathGuard.js`)
+  - `selectNote` accepted any string and handed it to the note file, which both
+    reads and writes. Any process able to reach the shell's IPC socket could
+    name a path outside the vault and have it read into the panel and written
+    back on the next save. It now only accepts a path the vault scan produced
+  - Clicking a link in a note passed the raw target to `xdg-open`, so a synced
+    or shared note could choose its own handler — a `file:` link opens an
+    arbitrary local path with whatever the desktop registered for it — or pass a
+    target `xdg-open` would read as an option. Link handling is now limited to
+    `http`, `https` and `mailto`
+  - Folder and path construction concatenated strings directly, and the folder
+    check refused `..` as a substring, which also refused the legitimate folder
+    `notes..archive`
+  - The vault picker and the link launcher shared one `Process` for three
+    different commands, so a pending pick could be clobbered by a link click
+  - `PathGuard.js` omits `.pragma library` so `tests/test_pathguard.mjs` imports
+    the file that ships rather than a copy of it
+- The vault path is persisted through the shell's own `updateEntryInline` API
+  instead of shelling out to python3 to rewrite `shell.json`. `json.dump()`
+  truncates the file before writing it, so an interrupted write left the
+  desktop's bar config corrupt
+- Content search and the note scan are bounded at every stage; see Limits below
+- The query was passed where `rg` would read a leading `-` as an option, so
+  searching for `--version` made `rg` print its version banner and exit
+- `status` no longer reports the vault path to any same-user IPC caller
+
+### Fixed
+- Notes larger than ~2.7 MB could not be created at all: the body was passed as
+  a process argument, so the write failed with "Argument list too long" and no
+  file was created. It is now written over stdin
+- A note changed elsewhere while Nether held unsaved edits was silently
+  overwritten on the next autosave. The conflict is now reported and the
+  on-disk version is retained
+- A content search still running when the query changed could deliver its
+  results afterwards and overwrite fresher ones
 
 ## [1.1.0] - 2026-09-25
 

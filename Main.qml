@@ -141,6 +141,10 @@ Panel {
   // mid-path, which would invent a note that does not exist.
   readonly property int scanMaxNotes: 20000
   property bool notesTruncated: false
+  // Set when the note on disk changed while we had unsaved edits, so the
+  // conflict is visible and recoverable rather than a silent overwrite.
+  property bool externalConflict: false
+  property string conflictingText: ""
 
   function noteTruncationMessage() {
     if (root.notesTruncated) return "This vault has more notes than Nether lists; showing the first " + root.scanMaxNotes + "."
@@ -441,7 +445,7 @@ Panel {
     // empty relative path; mkdir -p still needs a real directory to target.
     createProc.folder = folder === "" ? vaultPath : PathGuard.inVault(vaultPath, folder)
     createProc.path = absPath
-    createProc.content = ""
+    createProc.body = ""
     resetFocus("header")
     createProc.running = true
   }
@@ -538,8 +542,21 @@ Panel {
   }
 
   function handleExternalChange() {
-    if (loadingNote || dirty || pendingAbsPath === "") return
-    if (noteFile.path === pendingAbsPath) noteFile.reload()
+    if (loadingNote || pendingAbsPath === "") return
+    if (noteFile.path !== pendingAbsPath) return
+    if (dirty) {
+      // Somebody else wrote the note while we held unsaved edits. Reloading now
+      // would throw ours away, and staying silent meant the next autosave
+      // silently overwrote theirs. Say so instead, and keep their version
+      // around so the note can be recovered.
+      if (root.externalConflict) return
+      root.externalConflict = true
+      root.conflictingText = noteFile.text()
+      root.actionMessage = "This note changed elsewhere. Reload to take theirs, or keep editing to overwrite."
+      root.actionMessageTimer.restart()
+      return
+    }
+    noteFile.reload()
   }
 
   function renderView() {
@@ -1066,8 +1083,13 @@ function toggleTask(lineNo, wasChecked) {
     id: createProc
     property string folder: ""
     property string path: ""
-    property string content: ""
-    command: ["bash", "-c", "mkdir -p -- \"$1\" && printf '%s' \"$2\" > \"$3\"", "bash", folder, content, path]
+    property string body: ""
+    // The body goes in over stdin rather than as an argument: argv is readable
+    // in /proc/<pid>/cmdline by anything running as this user, and it is bounded
+    // by ARG_MAX, so a large note could fail to be created at all. mkdir still
+    // creates the directory; the redirect is the shell's.
+    command: ["bash", "-c", "mkdir -p -- \"$1\" && cat > \"$2\"", "bash", folder, path]
+    onStarted: write(body)
     onExited: function(exitCode) {
       if (exitCode !== 0) { root.actionError = "Could not create the note."; return }
       var rel = path.slice(root.vaultPath.length + 1)
@@ -1200,7 +1222,8 @@ function toggleTask(lineNo, wasChecked) {
         dirty: root.dirty,
         notes: root.notes.length,
         vaultMissing: root.vaultMissing,
-        vault: root.vaultPath,
+        notesTruncated: root.notesTruncated,
+        externalConflict: root.externalConflict,
         colH: Math.round(panelColumn.implicitHeight),
         cardH: Math.round(panel.contentHeight),
         cardW: Math.round(panel.contentWidth)
