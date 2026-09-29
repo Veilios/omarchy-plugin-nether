@@ -69,9 +69,28 @@ Panel {
     noteView.setSource("")
     editor.text = ""
     applyingText = false
-    saveSettingsProc.value = val
-    saveSettingsProc.running = true
+    persistVaultPath(val)
     rescanNotes()
+  }
+
+  // Persist the vault through the shell's own settings API rather than
+  // rewriting shell.json ourselves. The previous python3 json.dump() opened
+  // the shell's primary config for writing and truncated it before dumping, so
+  // an interrupted write left the desktop's bar config corrupt. updateEntryInline
+  // does the read-modify-write inside the shell, keeps the rest of the file
+  // intact, and keeps ownership of shell.json with the shell.
+  function persistVaultPath(val) {
+    var entry = { id: root.moduleName }
+    for (var key in root.settings) if (key !== "id") entry[key] = root.settings[key]
+    entry.vaultPath = val
+
+    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function") {
+      root.bar.shell.updateEntryInline(root.moduleName, entry)
+      return
+    }
+    // No writable bar entry (widget not in the layout): keep the session-only
+    // override we already applied rather than writing the file behind the shell.
+    actionError = "Vault path applies to this session only."
   }
 
   readonly property string vaultPath: vaultPathRaw.indexOf("~/") === 0 ? home + vaultPathRaw.slice(1) : vaultPathRaw
@@ -1060,28 +1079,6 @@ function toggleTask(lineNo, wasChecked) {
       root.persistState()
       root.resetFocus("header")
       root.rescanNotes()
-    }
-  }
-
-  Process {
-    id: saveSettingsProc
-    property string value: ""
-    command: {
-      var py = [
-        'import json,sys',
-        'p=sys.argv[1];vid=sys.argv[2];val=sys.argv[3]',
-        'd=json.load(open(p))',
-        'for sec in d.get("bar",{}).get("layout",{}).values():',
-        '    if isinstance(sec,list):',
-        '        for e in sec:',
-        '            if isinstance(e,dict) and e.get("id")==vid:',
-        '                e["vaultPath"]=val',
-        'json.dump(d,open(p,"w"),indent=2)',
-        'open(p,"a").write("\\n")'
-      ]
-      return ["python3", "-c", py.join("\n"),
-              home + "/.config/omarchy/shell.json",
-              "veilios.nether", value]
     }
   }
 
