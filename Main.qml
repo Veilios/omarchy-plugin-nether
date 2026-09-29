@@ -5,6 +5,7 @@ import Quickshell.Io
 import QtQuick.Effects
 import qs.Commons
 import qs.Ui
+import "PathGuard.js" as PathGuard
 
 Panel {
   id: root
@@ -171,8 +172,11 @@ Panel {
         var parsed = JSON.parse(line)
         if (parsed.type === "match") {
           var absPath = parsed.data.path
-          if (absPath.indexOf(vaultPath) === 0) {
-            var rel = absPath.slice(vaultPath.length + 1)
+          // A plain indexOf(0) prefix test would also accept a sibling like
+          // ~/Vault-old, so re-derive the relative path and let PathGuard
+          // decide whether it is a real in-vault path.
+          var rel = absPath.indexOf(vaultPath + "/") === 0 ? absPath.slice(vaultPath.length + 1) : ""
+          if (rel !== "" && PathGuard.safeRel(rel) !== "") {
             var snippet = parsed.data.lines.text.trim()
             if (!contentMatches[rel]) contentMatches[rel] = []
             if (contentMatches[rel].length < 3) {
@@ -227,11 +231,16 @@ Panel {
     if (dropdownIndex >= filteredNotes.length) dropdownIndex = Math.max(0, filteredNotes.length - 1)
   }
 
+  // Returns "" for the vault root, null for anything PathGuard rejects, else
+  // the folder's relative path. PathGuard is the authority on what may sit
+  // inside the vault; the old substring test for ".." also refused the
+  // perfectly legitimate folder "notes..archive".
   function folderValue(value) {
     var folder = String(value || "").trim().replace(/^\/+|\/+$/g, "")
-    if (folder === ".") return ""
-    if (folder === "" || folder.indexOf("..") >= 0 || folder.indexOf("\\") >= 0) return null
-    return folder
+    if (folder === "" || folder === ".") return ""
+    if (folder.indexOf("\\") >= 0) return null
+    var safe = PathGuard.safeRel(folder)
+    return safe === "" ? null : safe
   }
 
   function noteFileName(value) {
@@ -275,7 +284,8 @@ Panel {
   readonly property string noteDirectory: {
     if (currentNote === "") return vaultPath
     var i = currentNote.lastIndexOf("/")
-    return i >= 0 ? vaultPath + "/" + currentNote.slice(0, i) : vaultPath
+    if (i < 0) return vaultPath
+    return PathGuard.inVault(vaultPath, currentNote.slice(0, i)) || vaultPath
   }
 
   function dirUrl(p) {
@@ -321,12 +331,14 @@ Panel {
     if (nextName === ".md") { actionError = "Enter a note name."; return }
     var folder = currentNote.lastIndexOf("/") >= 0 ? currentNote.slice(0, currentNote.lastIndexOf("/")) : ""
     var nextRel = folder === "" ? nextName : folder + "/" + nextName
+    var nextAbs = PathGuard.inVault(vaultPath, nextRel)
+    if (nextAbs === "") { actionError = "Use a name inside the vault."; return }
     for (var i = 0; i < notes.length; i++) if (notes[i].rel === nextRel) { actionError = "A note with that name already exists."; return }
     if (nextRel !== currentNote) {
       flushSave()
       actionError = ""
       renameProc.oldPath = pendingAbsPath
-      renameProc.newPath = vaultPath + "/" + nextRel
+      renameProc.newPath = nextAbs
       renameProc.running = true
     }
     setEditMode(false)
@@ -363,9 +375,13 @@ Panel {
     if (file === ".md") { actionError = "Enter a note title."; return }
     if (folder === null) { actionError = "Use a folder inside the vault."; return }
     var rel = folder === "" ? file : folder + "/" + file
+    var absPath = PathGuard.inVault(vaultPath, rel)
+    if (absPath === "") { actionError = "Use a folder inside the vault."; return }
     for (var i = 0; i < notes.length; i++) if (notes[i].rel === rel) { actionError = "A note with that name already exists."; return }
-    createProc.folder = folder === "" ? vaultPath : vaultPath + "/" + folder
-    createProc.path = vaultPath + "/" + rel
+    // An empty folder means the vault root itself, which inVault rejects as an
+    // empty relative path; mkdir -p still needs a real directory to target.
+    createProc.folder = folder === "" ? vaultPath : PathGuard.inVault(vaultPath, folder)
+    createProc.path = absPath
     createProc.content = ""
     resetFocus("header")
     createProc.running = true
@@ -378,10 +394,12 @@ Panel {
     var file = currentNote.slice(currentNote.lastIndexOf("/") + 1)
     var nextRel = folder === "" ? file : folder + "/" + file
     if (nextRel === currentNote) { actionError = "Choose a different folder."; return }
+    var nextAbs = PathGuard.inVault(vaultPath, nextRel)
+    if (nextAbs === "") { actionError = "Use a folder inside the vault."; return }
     for (var i = 0; i < notes.length; i++) if (notes[i].rel === nextRel) { actionError = "A note already exists there."; return }
     flushSave()
     moveProc.oldPath = pendingAbsPath
-    moveProc.newPath = vaultPath + "/" + nextRel
+    moveProc.newPath = nextAbs
     moveProc.nextRel = nextRel
     resetFocus("header")
     moveProc.running = true
@@ -396,6 +414,14 @@ Panel {
   property bool pendingDropdown: false
 
   function switchTo(rel, keepOpen) {
+    // Defence in depth: callers are expected to have vetted rel already, but
+    // every path that reaches FileView goes through PathGuard so no future
+    // caller can reintroduce a traversal by forgetting to check.
+    var absPath = PathGuard.inVault(vaultPath, rel)
+    if (rel !== "" && absPath === "") {
+      actionError = "That note path is outside the vault."
+      return
+    }
     if (rel === currentNote) {
       dropdownOpen = false
       resetFocus("header")
@@ -408,7 +434,7 @@ Panel {
     if (!keepOpen) dropdownOpen = false
     loadingNote = true
     currentNote = rel
-    pendingAbsPath = rel === "" ? "" : vaultPath + "/" + rel
+    pendingAbsPath = absPath
     if (pendingAbsPath !== "") {
       noteFile.path = pendingAbsPath
     } else {
@@ -738,7 +764,7 @@ function toggleTask(lineNo, wasChecked) {
       if (settingsIndex === 0) {
         if (draftVaultPath !== vaultPathRaw) applyVaultPath(draftVaultPath)
         else settingsOpen = false
-      } else if (settingsIndex === 1) linkOpener.running = true
+      } else if (settingsIndex === 1) vaultPickerProc.running = true
       else if (settingsIndex === 2) rescanNotes()
       else if (settingsIndex === 3) applyVaultPath("")
       else if (settingsIndex === 4) hotKeysOpen = true
@@ -931,7 +957,11 @@ function toggleTask(lineNo, wasChecked) {
   }
 
   Process {
-    id: linkOpener
+    id: linkLaunchProc
+  }
+
+  Process {
+    id: vaultPickerProc
     command: ["bash", "-c",
       'if command -v zenity >/dev/null 2>&1; then zenity --file-selection --directory --title="Select Obsidian Vault"; ' +
       'elif command -v kdialog >/dev/null 2>&1; then kdialog --getexistingdirectory --title "Select Obsidian Vault"; fi']
@@ -1092,7 +1122,11 @@ function toggleTask(lineNo, wasChecked) {
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
 
+    // Only a path the vault scan actually produced is accepted. Any process
+    // running as the user can reach this socket, and noteFile both reads and
+    // writes its path, so an unchecked rel was an arbitrary file read/write.
     function selectNote(rel: string): string {
+      if (!PathGuard.isKnownNote(root.notes, rel)) return "unknown-note"
       root.switchTo(rel)
       return "ok"
     }
@@ -1785,7 +1819,7 @@ if (event.key === Qt.Key_Space) {
             Repeater {
               model: [
                 { label: "SAVE", act: function() { if (root.draftVaultPath !== root.vaultPathRaw) root.applyVaultPath(root.draftVaultPath); else root.settingsOpen = false } },
-                { label: "LOCATE", act: function() { linkOpener.running = true } },
+                { label: "LOCATE", act: function() { vaultPickerProc.running = true } },
                 { label: "REFRESH", act: function() { root.rescanNotes() } },
                 { label: "DISCONNECT", act: function() { root.applyVaultPath("") } },
                 { label: "HOT KEYS", act: function() { root.hotKeysOpen = true } }
@@ -2403,8 +2437,15 @@ if (event.key === Qt.Key_Space) {
               }
             }
             onLinkActivated: function(link) {
-              linkOpener.command = ["xdg-open", link]
-              linkOpener.running = true
+              // Note bodies are untrusted (a vault can be synced or shared), so
+              // a link may not pick its own handler: an unfiltered file: link
+              // would hand an arbitrary local path to whatever the desktop has
+              // registered for it. PathGuard restricts this to http/https/mailto
+              // and refuses targets xdg-open would read as an option.
+              var allowed = PathGuard.linkAllowed(link)
+              if (allowed === "") return
+              linkLaunchProc.command = ["xdg-open", allowed]
+              linkLaunchProc.running = true
             }
           }
 
@@ -2527,10 +2568,10 @@ if (event.key === Qt.Key_Space) {
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
               onClicked: {
-                linkOpener.command = ["bash", "-c",
+                vaultPickerProc.command = ["bash", "-c",
                   'if command -v zenity >/dev/null 2>&1; then zenity --file-selection --directory --title="Select Obsidian Vault"; ' +
                   'elif command -v kdialog >/dev/null 2>&1; then kdialog --getexistingdirectory --title "Select Obsidian Vault"; fi']
-                linkOpener.running = true
+                vaultPickerProc.running = true
               }
             }
           }
