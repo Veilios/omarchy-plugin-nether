@@ -17,6 +17,12 @@ Panel {
   implicitHeight: button.implicitHeight
 
   readonly property string home: Quickshell.env("HOME")
+  // All filesystem mutation goes through this helper rather than through shell
+  // commands. Path-based tools cannot defend against symlinks inside the vault
+  // — and a vault can be a clone, a synced folder, or something shared with
+  // you — while the helper resolves every component from a descriptor with
+  // O_NOFOLLOW, so the open that writes is also the check that confines it.
+  readonly property string vaultHelper: Qt.resolvedUrl("nether_vault.py").toLocalFile()
   property bool overrideActive: false
   property string overrideValue: ""
   readonly property string vaultPathRaw: overrideActive ? overrideValue : setting("vaultPath", "~/Documents/Obsidian Vault")
@@ -49,9 +55,26 @@ Panel {
     folderModel = model
   }
 
+  // A vault of "/" or the home directory is almost certainly a mis-pick, and
+  // it would put every note operation outside any real vault. Refuse it here
+  // so the mistake is caught at the point it is made. An empty value is the
+  // deliberate "disconnect" action and stays allowed.
+  function plausibleVault(v) {
+    var val = String(v || "").trim()
+    if (val === "") return true
+    if (val.indexOf("~/") === 0) val = home + val.slice(1)
+    if (val === "/" || val === home) return false
+    return true
+  }
+
   function applyVaultPath(v) {
     flushSave()
     var val = v.trim()
+    if (!plausibleVault(val)) {
+      actionError = "Pick a folder for your notes, not / or your home directory."
+      settingsOpen = true
+      return
+    }
     overrideActive = true
     overrideValue = val
     settingsOpen = false
@@ -145,6 +168,9 @@ Panel {
   // conflict is visible and recoverable rather than a silent overwrite.
   property bool externalConflict: false
   property string conflictingText: ""
+  // Set while an autosave we issued is in flight, so the change watcher does
+  // not report our own write as somebody else editing the note.
+  property bool selfWriteSeen: false
 
   function noteTruncationMessage() {
     if (root.notesTruncated) return "This vault has more notes than Nether lists; showing the first " + root.scanMaxNotes + "."
@@ -363,14 +389,32 @@ Panel {
     stateFile.setText(JSON.stringify({ lastNote: currentNote }) + "\n")
   }
 
+  // Exit 3 from the helper means "refused for safety", and it explains why on
+  // stderr. Anything else is a plain failure. Either way the panel says what
+  // happened rather than a generic failure.
+  function vaultOpError(stderrText, fallback) {
+    var msg = String(stderrText || "").trim()
+    if (msg === "") return fallback
+    // The helper reports raw errno text for genuine I/O errors; keep the
+    // refusal messages, which are written for a person, and drop the rest.
+    if (msg.indexOf("os error:") === 0) return fallback
+    return msg.charAt(0).toUpperCase() + msg.slice(1) + "."
+  }
+
   function flushSave() {
     saveTimer.stop()
     if (!dirty || currentNote === "" || pendingAbsPath === "") {
       dirty = false
       return
     }
+    if (saveProc.running) return // a save is already carrying this note's text
     lastKnownFileText = rawText
-    noteFile.setText(rawText)
+    // Our own write will show up on the watcher; flag it so handleExternalChange
+    // does not mistake it for somebody else editing the note.
+    selfWriteSeen = true
+    saveProc.rel = currentNote
+    saveProc.body = rawText
+    saveProc.running = true
     dirty = false
   }
 
@@ -400,8 +444,8 @@ Panel {
     if (nextRel !== currentNote) {
       flushSave()
       actionError = ""
-      renameProc.oldPath = pendingAbsPath
-      renameProc.newPath = nextAbs
+      renameProc.oldRel = currentNote
+      renameProc.newRel = nextRel
       renameProc.running = true
     }
     setEditMode(false)
@@ -443,8 +487,7 @@ Panel {
     for (var i = 0; i < notes.length; i++) if (notes[i].rel === rel) { actionError = "A note with that name already exists."; return }
     // An empty folder means the vault root itself, which inVault rejects as an
     // empty relative path; mkdir -p still needs a real directory to target.
-    createProc.folder = folder === "" ? vaultPath : PathGuard.inVault(vaultPath, folder)
-    createProc.path = absPath
+    createProc.rel = rel
     createProc.body = ""
     resetFocus("header")
     createProc.running = true
@@ -461,16 +504,15 @@ Panel {
     if (nextAbs === "") { actionError = "Use a folder inside the vault."; return }
     for (var i = 0; i < notes.length; i++) if (notes[i].rel === nextRel) { actionError = "A note already exists there."; return }
     flushSave()
-    moveProc.oldPath = pendingAbsPath
-    moveProc.newPath = nextAbs
-    moveProc.nextRel = nextRel
+    moveProc.oldRel = currentNote
+    moveProc.newRel = nextRel
     resetFocus("header")
     moveProc.running = true
   }
 
   function completeDelete() {
     deleteConfirmOpen = false
-    rmProc.path = pendingAbsPath
+    rmProc.rel = currentNote
     rmProc.running = true
   }
 
@@ -544,6 +586,12 @@ Panel {
   function handleExternalChange() {
     if (loadingNote || pendingAbsPath === "") return
     if (noteFile.path !== pendingAbsPath) return
+    if (selfWriteSeen) {
+      // Our own autosave landing. Nothing to reconcile.
+      selfWriteSeen = false
+      noteFile.reload()
+      return
+    }
     if (dirty) {
       // Somebody else wrote the note while we held unsaved edits. Reloading now
       // would throw ours away, and staying silent meant the next autosave
@@ -1081,18 +1129,13 @@ function toggleTask(lineNo, wasChecked) {
 
   Process {
     id: createProc
-    property string folder: ""
-    property string path: ""
+    property string rel: ""
     property string body: ""
-    // The body goes in over stdin rather than as an argument: argv is readable
-    // in /proc/<pid>/cmdline by anything running as this user, and it is bounded
-    // by ARG_MAX, so a large note could fail to be created at all. mkdir still
-    // creates the directory; the redirect is the shell's.
-    command: ["bash", "-c", "mkdir -p -- \"$1\" && cat > \"$2\"", "bash", folder, path]
+    command: ["python3", root.vaultHelper, "create", root.vaultPath, rel]
     onStarted: write(body)
+    stderr: StdioCollector { id: createErr; waitForEnd: true }
     onExited: function(exitCode) {
-      if (exitCode !== 0) { root.actionError = "Could not create the note."; return }
-      var rel = path.slice(root.vaultPath.length + 1)
+      if (exitCode !== 0) { root.actionError = root.vaultOpError(createErr.text, "Could not create the note."); return }
       root.createOpen = false
       root.pendingEditOnLoad = true
       root.rescanNotes()
@@ -1103,36 +1146,36 @@ function toggleTask(lineNo, wasChecked) {
 
   Process {
     id: renameProc
-    property string oldPath: ""
-    property string newPath: ""
-    command: ["bash", "-c", "mv -- \"$1\" \"$2\"", "bash", oldPath, newPath]
+    property string oldRel: ""
+    property string newRel: ""
+    command: ["python3", root.vaultHelper, "move", root.vaultPath, oldRel, newRel]
+    stderr: StdioCollector { id: renameErr; waitForEnd: true }
     onExited: function(exitCode) {
-      if (exitCode !== 0) { root.actionError = "Could not rename the note."; return }
-      var nextRel = newPath.slice(root.vaultPath.length + 1)
-      root.currentNote = nextRel
-      root.pendingAbsPath = newPath
+      if (exitCode !== 0) { root.actionError = root.vaultOpError(renameErr.text, "Could not rename the note."); return }
+      root.currentNote = newRel
+      root.pendingAbsPath = PathGuard.inVault(root.vaultPath, newRel)
       root.persistState()
       root.renameDraft = root.noteName
       root.actionError = ""
-      root.noteFile.path = newPath
+      root.noteFile.path = root.pendingAbsPath
       root.rescanNotes()
     }
   }
 
   Process {
     id: moveProc
-    property string oldPath: ""
-    property string newPath: ""
-    property string nextRel: ""
-    command: ["bash", "-c", "mkdir -p -- \"$(dirname -- \"$2\")\" && mv -- \"$1\" \"$2\"", "bash", oldPath, newPath]
+    property string oldRel: ""
+    property string newRel: ""
+    command: ["python3", root.vaultHelper, "move", root.vaultPath, oldRel, newRel]
+    stderr: StdioCollector { id: moveErr; waitForEnd: true }
     onExited: function(exitCode) {
-      if (exitCode !== 0) { root.actionError = "Could not move the note."; return }
-      root.currentNote = nextRel
-      root.pendingAbsPath = newPath
+      if (exitCode !== 0) { root.actionError = root.vaultOpError(moveErr.text, "Could not move the note."); return }
+      root.currentNote = newRel
+      root.pendingAbsPath = PathGuard.inVault(root.vaultPath, newRel)
       root.persistState()
       root.moveOpen = false
       root.actionError = ""
-      root.noteFile.path = newPath
+      root.noteFile.path = root.pendingAbsPath
       root.resetFocus("header")
       root.rescanNotes()
     }
@@ -1140,10 +1183,11 @@ function toggleTask(lineNo, wasChecked) {
 
   Process {
     id: rmProc
-    property string path: ""
-    command: ["rm", "-f", "--", path]
+    property string rel: ""
+    command: ["python3", root.vaultHelper, "delete", root.vaultPath, rel]
+    stderr: StdioCollector { id: rmErr; waitForEnd: true }
     onExited: function(exitCode) {
-      if (exitCode !== 0) { root.actionError = "Could not delete the note."; return }
+      if (exitCode !== 0) { root.actionError = root.vaultOpError(rmErr.text, "Could not delete the note."); return }
       root.currentNote = ""
       root.pendingAbsPath = ""
       root.rawText = ""
@@ -1154,6 +1198,33 @@ function toggleTask(lineNo, wasChecked) {
       root.persistState()
       root.resetFocus("header")
       root.rescanNotes()
+    }
+  }
+
+  // Autosave writes through the same helper. Quickshell's FileView gives no
+  // way to ask for O_NOFOLLOW, so leaving the write to it would keep a narrow
+  // window in which a folder swapped for a symlink just before the save
+  // redirects the write outside the vault. FileView stays as the reader and
+  // the change watcher, so external-edit detection is unaffected.
+  Process {
+    id: saveProc
+    property string rel: ""
+    property string body: ""
+    command: ["python3", root.vaultHelper, "write", root.vaultPath, rel]
+    onStarted: write(body)
+    stderr: StdioCollector { id: saveErr; waitForEnd: true }
+    onExited: function(exitCode) {
+      root.selfWriteSeen = false
+      if (exitCode !== 0) {
+        // Keep the edits: mark dirty again so the next autosave retries, and
+        // say why rather than dropping the user's typing on the floor.
+        root.dirty = true
+        root.externalConflict = true
+        root.actionMessage = root.vaultOpError(saveErr.text, "Could not save the note.")
+        root.actionMessageTimer.restart()
+        return
+      }
+      root.noteFile.reload()
     }
   }
 
