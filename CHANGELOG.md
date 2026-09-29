@@ -2,6 +2,64 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-09-29
+
+### Removed
+- **Auto-delete of completed tasks** (the daily vault rewrite), along with
+  `nether_auto_delete.py` and `tests/test_symlink_protection.py`
+  - The feature was opt-in by nobody: it ran on every shell start and every
+    24h, opening every `.md` file in the vault and writing it back through a
+    temp file + rename
+  - That rewrite discarded each note's original mode (the temp file was created
+    `0600`), so it silently stripped permissions and churned every inode in the
+    vault daily
+  - `O_NOFOLLOW` was only applied to the final path component, and the write
+    path used plain pathnames rather than the retained vault descriptor, so an
+    intermediate directory swapped for a symlink between walk and write could
+    still redirect the rewrite outside the vault
+  - A lost-update race also let the pass clobber edits made by Obsidian
+    concurrently, since the file was re-read by path rather than compared
+  - Notes are now only ever written by an explicit user action. The
+    `<!-- completed: ... -->` marker is still written when you tick a task and
+    is still round-tripped, it is simply never swept up afterwards
+
+### Security
+- Note paths and markdown links are validated in one place (`PathGuard.js`)
+  - `selectNote` accepted any string and handed it to the note file, which both
+    reads and writes. Any process able to reach the shell's IPC socket could
+    name a path outside the vault and have it read into the panel and written
+    back on the next save. It now only accepts a path the vault scan produced
+  - Clicking a link in a note passed the raw target to `xdg-open`, so a synced
+    or shared note could choose its own handler — a `file:` link opens an
+    arbitrary local path with whatever the desktop registered for it — or pass a
+    target `xdg-open` would read as an option. Link handling is now limited to
+    `http`, `https` and `mailto`
+  - Folder and path construction concatenated strings directly, and the folder
+    check refused `..` as a substring, which also refused the legitimate folder
+    `notes..archive`
+  - The vault picker and the link launcher shared one `Process` for three
+    different commands, so a pending pick could be clobbered by a link click
+  - `PathGuard.js` omits `.pragma library` so `tests/test_pathguard.mjs` imports
+    the file that ships rather than a copy of it
+- The vault path is persisted through the shell's own `updateEntryInline` API
+  instead of shelling out to python3 to rewrite `shell.json`. `json.dump()`
+  truncates the file before writing it, so an interrupted write left the
+  desktop's bar config corrupt
+- Content search and the note scan are bounded at every stage; see Limits below
+- The query was passed where `rg` would read a leading `-` as an option, so
+  searching for `--version` made `rg` print its version banner and exit
+- `status` no longer reports the vault path to any same-user IPC caller
+
+### Fixed
+- Notes larger than ~2.7 MB could not be created at all: the body was passed as
+  a process argument, so the write failed with "Argument list too long" and no
+  file was created. It is now written over stdin
+- A note changed elsewhere while Nether held unsaved edits was silently
+  overwritten on the next autosave. The conflict is now reported and the
+  on-disk version is retained
+- A content search still running when the query changed could deliver its
+  results afterwards and overwrite fresher ones
+
 ## [1.1.0] - 2026-09-25
 
 ### Security

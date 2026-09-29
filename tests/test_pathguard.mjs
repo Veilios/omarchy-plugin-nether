@@ -1,0 +1,165 @@
+// Unit tests for PathGuard.js — the traversal, link and bounding guarantees
+// the shell relies on. Run with: node tests/test_pathguard.mjs
+//
+// These assert behaviour, not source text: Main.qml imports the same file
+// these tests do, so a change that weakens the guard fails here.
+
+import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
+import { dirname, join } from "node:path"
+import assert from "node:assert/strict"
+
+const here = dirname(fileURLToPath(import.meta.url))
+const src = readFileSync(join(here, "..", "PathGuard.js"), "utf8")
+
+// PathGuard.js is a plain script (no exports) so QML can import it directly.
+// Evaluate it once and lift the functions out, rather than maintaining a
+// parallel copy that could drift from what ships.
+const mod = new Function(`${src}\nreturn { safeRel, inVault, isKnownNote, linkAllowed, capResults }`)()
+const { safeRel, inVault, isKnownNote, linkAllowed, capResults } = mod
+
+let passed = 0
+const failures = []
+
+function test(name, fn) {
+  try {
+    fn()
+    passed++
+  } catch (err) {
+    failures.push(`${name}: ${err.message}`)
+  }
+}
+
+// --------------------------------------------------------------- safeRel
+
+test("safeRel accepts ordinary nested vault paths", () => {
+  assert.equal(safeRel("note.md"), "note.md")
+  assert.equal(safeRel("projects/2026/plan.md"), "projects/2026/plan.md")
+  assert.equal(safeRel("folder with spaces/My Note.md"), "folder with spaces/My Note.md")
+  assert.equal(safeRel("dots..in.name.md"), "dots..in.name.md")
+  assert.equal(safeRel("notes..archive/x.md"), "notes..archive/x.md")
+})
+
+test("safeRel refuses every traversal shape", () => {
+  assert.equal(safeRel(".."), "")
+  assert.equal(safeRel("../.bashrc"), "")
+  assert.equal(safeRel("a/../../b.md"), "")
+  assert.equal(safeRel("a/../b.md"), "")
+  assert.equal(safeRel("a/b/../../../etc/passwd"), "")
+  assert.equal(safeRel("..%2f..%2fbashrc"), "..%2f..%2fbashrc") // not a separator, inert
+})
+
+test("safeRel refuses absolute and empty-ish input", () => {
+  assert.equal(safeRel("/etc/passwd"), "") // absolute is refused, not normalised
+  assert.equal(safeRel("/a.md"), "")
+  assert.equal(safeRel("/"), "")
+  assert.equal(safeRel("///"), "")
+  assert.equal(safeRel(""), "")
+  assert.equal(safeRel("   "), "   ") // a space is a legal filename character
+  assert.equal(safeRel("a//b.md"), "") // empty segment
+  assert.equal(safeRel("./a.md"), "")
+})
+
+test("safeRel refuses non-strings and NUL bytes", () => {
+  assert.equal(safeRel(undefined), "")
+  assert.equal(safeRel(null), "")
+  assert.equal(safeRel(42), "")
+  assert.equal(safeRel({}), "")
+  assert.equal(safeRel(["a.md"]), "")
+  assert.equal(safeRel("a" + String.fromCharCode(0) + ".md"), "")
+  assert.equal(safeRel("a\nb.md"), "a\nb.md") // newline is legal in a filename
+})
+
+// --------------------------------------------------------------- inVault
+
+test("inVault joins only validated relatives", () => {
+  assert.equal(inVault("/home/u/Vault", "a/b.md"), "/home/u/Vault/a/b.md")
+  assert.equal(inVault("/home/u/Vault/", "a.md"), "/home/u/Vault/a.md")
+  assert.equal(inVault("/home/u/Vault///", "a.md"), "/home/u/Vault/a.md")
+})
+
+test("inVault refuses to escape the vault", () => {
+  assert.equal(inVault("/home/u/Vault", "../../.bashrc"), "")
+  assert.equal(inVault("/home/u/Vault", "/etc/passwd"), "")
+  assert.equal(inVault("/home/u/Vault", ".."), "")
+  assert.equal(inVault("", "a.md"), "")
+  assert.equal(inVault("/home/u/Vault", ""), "")
+  assert.equal(inVault("/", "a.md"), "") // filesystem root is not a usable vault
+  assert.equal(inVault("///", "a.md"), "")
+})
+
+// ----------------------------------------------------------- isKnownNote
+
+test("isKnownNote only accepts paths the scan produced", () => {
+  const notes = [{ rel: "a.md" }, { rel: "sub/b.md" }]
+  assert.equal(isKnownNote(notes, "a.md"), true)
+  assert.equal(isKnownNote(notes, "sub/b.md"), true)
+  assert.equal(isKnownNote(notes, "../../.bashrc"), false)
+  assert.equal(isKnownNote(notes, "sub/../a.md"), false)
+  assert.equal(isKnownNote(notes, "missing.md"), false)
+  assert.equal(isKnownNote(notes, ""), false)
+  assert.equal(isKnownNote(notes, undefined), false)
+  assert.equal(isKnownNote(null, "a.md"), false)
+  assert.equal(isKnownNote([], "a.md"), false)
+})
+
+// ----------------------------------------------------------- linkAllowed
+
+test("linkAllowed permits the schemes we intend to open", () => {
+  assert.equal(linkAllowed("https://example.com/a?b=c#d"), "https://example.com/a?b=c#d")
+  assert.equal(linkAllowed("http://example.com"), "http://example.com")
+  assert.equal(linkAllowed("mailto:someone@example.com"), "mailto:someone@example.com")
+  assert.equal(linkAllowed("HTTPS://EXAMPLE.COM"), "HTTPS://EXAMPLE.COM") // scheme is case-insensitive
+  assert.equal(linkAllowed("  https://example.com  "), "https://example.com")
+})
+
+test("linkAllowed refuses handler-abusable and option-like targets", () => {
+  assert.equal(linkAllowed("file:///etc/shadow"), "")
+  assert.equal(linkAllowed("FILE:///etc/shadow"), "")
+  assert.equal(linkAllowed("javascript:alert(1)"), "")
+  assert.equal(linkAllowed("data:text/html,<script>"), "")
+  assert.equal(linkAllowed("ftp://example.com"), "")
+  assert.equal(linkAllowed("smb://server/share"), "")
+  assert.equal(linkAllowed("notes/other.md"), "") // relative: no base to resolve
+  assert.equal(linkAllowed("/etc/passwd"), "") // scheme-less absolute
+  assert.equal(linkAllowed("--version"), "")
+  assert.equal(linkAllowed("-"), "")
+  assert.equal(linkAllowed(""), "")
+  assert.equal(linkAllowed("   "), "")
+  assert.equal(linkAllowed(undefined), "")
+  assert.equal(linkAllowed(7), "")
+})
+
+// ------------------------------------------------------------- capResults
+
+test("capResults bounds the number of files", () => {
+  const many = {}
+  for (let i = 0; i < 50; i++) many[`note-${i}.md`] = [{ line: 1, text: "x" }]
+
+  assert.equal(capResults(many, 10), 40)
+  assert.equal(Object.keys(many).length, 10)
+  assert.ok(many["note-0.md"], "keeps the first results rg emitted")
+  assert.equal(many["note-49.md"], undefined)
+
+  const few = { "a.md": [], "b.md": [] }
+  assert.equal(capResults(few, 10), 0)
+  assert.equal(Object.keys(few).length, 2)
+})
+
+test("capResults tolerates bad input", () => {
+  assert.equal(capResults(null, 5), 0)
+  assert.equal(capResults(undefined, 5), 0)
+  assert.equal(capResults({ "a.md": 1 }, -1), 0)
+  assert.equal(capResults({ "a.md": 1 }, NaN), 0)
+  const zero = { "a.md": [], "b.md": [] }
+  assert.equal(capResults(zero, 0), 2)
+  assert.equal(Object.keys(zero).length, 0)
+})
+
+// ------------------------------------------------------------------ report
+
+console.log(`\nPathGuard: ${passed} passed, ${failures.length} failed`)
+if (failures.length) {
+  for (const f of failures) console.error("  FAIL " + f)
+  process.exit(1)
+}

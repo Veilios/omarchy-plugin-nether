@@ -12,20 +12,60 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Node
+        uses: actions/setup-node@v4
         with:
-          python-version: "3.8"
+          node-version: "20"
 
-      - name: Run security tests
-        run: |
-          cd ${{ github.workspace }}
-          python3 tests/test_symlink_protection.py
+      - name: Run path and link guard tests
+        run: node tests/test_pathguard.mjs
 
       - name: Validate plugin manifest
         run: |
-          echo "Manifest validation would run here if omarchy CLI available"
+          python3 - <<'PY'
+          import json, os, sys
+          m = json.load(open("manifest.json"))
+          missing = [k for k in ("schemaVersion", "id", "name", "version", "author", "license", "description") if not m.get(k)]
+          if missing:
+              sys.exit("manifest.json missing required keys: %s" % ", ".join(missing))
+          entry = m.get("entryPoints", {}).get("barWidget")
+          if not entry or not os.path.isfile(entry):
+              sys.exit("entryPoints.barWidget does not point at a real file: %r" % entry)
+          print("manifest ok: %s %s -> %s" % (m["id"], m["version"], entry))
+          PY
 
       - name: Lint QML
         run: |
-          echo "QML linting would run here if qmllint available"
+          # qmllint ships in qt6-declarative-dev-tools, not in the qml6-module-*
+          # runtime packages, and lands in /usr/lib/qt6/bin rather than on PATH.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qt6-declarative-dev-tools
+          QMLLINT="$(command -v qmllint || true)"
+          if [ -z "$QMLLINT" ]; then
+            for c in /usr/lib/qt6/bin/qmllint /usr/lib/qt6/libexec/qmllint; do
+              if [ -x "$c" ]; then QMLLINT="$c"; break; fi
+            done
+          fi
+          if [ -z "$QMLLINT" ]; then
+            echo "::error::qmllint not found after installing qt6-declarative-dev-tools"
+            exit 1
+          fi
+          echo "using $QMLLINT"
+          status=0
+          for f in Main.qml NoteView.qml HotKeysPopup.qml; do
+            # Only [syntax] diagnostics are enforced. Unresolved imports are
+            # expected (Quickshell and the shell's own modules are not packaged
+            # on the runner), and the runner's Qt is older than the target's, so
+            # stricter type diagnostics would fail the build on version skew
+            # rather than on anything wrong with this plugin.
+            out="$("$QMLLINT" --bare "$f" 2>&1 || true)"
+            syn="$(printf '%s\n' "$out" | grep -c '\[syntax\]' || true)"
+            if [ "$syn" != "0" ]; then
+              echo "::error::$f has $syn syntax error(s)"
+              printf '%s\n' "$out" | grep -B1 -A2 '\[syntax\]' || true
+              status=1
+            else
+              echo "ok: $f"
+            fi
+          done
+          exit $status

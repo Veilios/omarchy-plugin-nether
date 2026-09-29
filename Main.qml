@@ -5,6 +5,7 @@ import Quickshell.Io
 import QtQuick.Effects
 import qs.Commons
 import qs.Ui
+import "PathGuard.js" as PathGuard
 
 Panel {
   id: root
@@ -68,9 +69,28 @@ Panel {
     noteView.setSource("")
     editor.text = ""
     applyingText = false
-    saveSettingsProc.value = val
-    saveSettingsProc.running = true
+    persistVaultPath(val)
     rescanNotes()
+  }
+
+  // Persist the vault through the shell's own settings API rather than
+  // rewriting shell.json ourselves. The previous python3 json.dump() opened
+  // the shell's primary config for writing and truncated it before dumping, so
+  // an interrupted write left the desktop's bar config corrupt. updateEntryInline
+  // does the read-modify-write inside the shell, keeps the rest of the file
+  // intact, and keeps ownership of shell.json with the shell.
+  function persistVaultPath(val) {
+    var entry = { id: root.moduleName }
+    for (var key in root.settings) if (key !== "id") entry[key] = root.settings[key]
+    entry.vaultPath = val
+
+    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function") {
+      root.bar.shell.updateEntryInline(root.moduleName, entry)
+      return
+    }
+    // No writable bar entry (widget not in the layout): keep the session-only
+    // override we already applied rather than writing the file behind the shell.
+    actionError = "Vault path applies to this session only."
   }
 
   readonly property string vaultPath: vaultPathRaw.indexOf("~/") === 0 ? home + vaultPathRaw.slice(1) : vaultPathRaw
@@ -103,6 +123,34 @@ Panel {
   }
   property int footerIndex: 0
   property bool keyDebugEnabled: false
+
+  // Content search runs inside the long-lived shell process, so every stage of
+  // it is bounded. rg's own limits cut the work it does, the byte cap caps what
+  // can reach us at all, and the file/snippet caps cap what we then retain.
+  // A vault large enough to hit these is a signal to narrow the query, not a
+  // reason to spend the shell's memory on it.
+  readonly property int contentSearchMaxFiles: 200
+  readonly property int contentSearchMaxSnippetsPerFile: 3
+  readonly property int contentSearchMaxBytes: 4000000
+  readonly property int contentSearchMaxFileSize: 2 * 1024 * 1024
+  readonly property int contentSearchMaxDepth: 24
+  property bool contentSearchTruncated: false
+  // The note scan is bounded too, for the same reason: a vault with a very
+  // large number of notes would otherwise grow an unbounded list in the
+  // shell. head -n is used rather than head -c so the list is never cut
+  // mid-path, which would invent a note that does not exist.
+  readonly property int scanMaxNotes: 20000
+  property bool notesTruncated: false
+  // Set when the note on disk changed while we had unsaved edits, so the
+  // conflict is visible and recoverable rather than a silent overwrite.
+  property bool externalConflict: false
+  property string conflictingText: ""
+
+  function noteTruncationMessage() {
+    if (root.notesTruncated) return "This vault has more notes than Nether lists; showing the first " + root.scanMaxNotes + "."
+    if (root.contentSearchTruncated) return "Too many matches to show — narrow the search."
+    return ""
+  }
 
   function keyLog(msg) {
     if (!keyDebugEnabled) return
@@ -153,7 +201,11 @@ Panel {
 
   function performContentSearch() {
     var q = noteSearch.trim()
+    contentSearchTruncated = false
     if (q.length < 2) return
+    // A search already in flight is for a query the user has since typed past.
+    // Killing it stops its results arriving late and overwriting fresher ones.
+    if (contentSearchProc.running) contentSearchProc.kill()
     contentSearchRunning = true
     contentSearchProc.query = q
     contentSearchProc.vault = vaultPath
@@ -162,8 +214,13 @@ Panel {
 
   function onContentSearchResults(output) {
     contentSearchRunning = false
+    // head -c has already bounded this, but a truncated stream can end
+    // mid-record; treat reaching the cap as a clipped result set.
+    if (String(output).length >= root.contentSearchMaxBytes) contentSearchTruncated = true
     var lines = String(output).split("\n")
     var contentMatches = {}
+    var files = 0
+    var dropped = 0
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i].trim()
       if (!line) continue
@@ -171,18 +228,28 @@ Panel {
         var parsed = JSON.parse(line)
         if (parsed.type === "match") {
           var absPath = parsed.data.path
-          if (absPath.indexOf(vaultPath) === 0) {
-            var rel = absPath.slice(vaultPath.length + 1)
+          // A plain indexOf(0) prefix test would also accept a sibling like
+          // ~/Vault-old, so re-derive the relative path and let PathGuard
+          // decide whether it is a real in-vault path.
+          var rel = absPath.indexOf(vaultPath + "/") === 0 ? absPath.slice(vaultPath.length + 1) : ""
+          if (rel !== "" && PathGuard.safeRel(rel) !== "") {
+            if (!contentMatches[rel]) {
+              files++
+              // Stop accumulating once we have enough files, and drop the
+              // remainder rather than growing an object no dropdown will show.
+              if (files > root.contentSearchMaxFiles) { dropped++; continue }
+            }
             var snippet = parsed.data.lines.text.trim()
-            if (!contentMatches[rel]) contentMatches[rel] = []
-            if (contentMatches[rel].length < 3) {
+            if (contentMatches[rel].length < root.contentSearchMaxSnippetsPerFile) {
               contentMatches[rel].push({ line: parsed.data.line_number, text: snippet })
             }
           }
         }
       } catch (e) {}
     }
+    if (dropped > 0) contentSearchTruncated = true
     mergeSearchResults(contentMatches)
+    if (contentSearchTruncated) { actionMessage = noteTruncationMessage(); actionMessageTimer.restart() }
   }
 
   function mergeSearchResults(contentMatches) {
@@ -227,11 +294,16 @@ Panel {
     if (dropdownIndex >= filteredNotes.length) dropdownIndex = Math.max(0, filteredNotes.length - 1)
   }
 
+  // Returns "" for the vault root, null for anything PathGuard rejects, else
+  // the folder's relative path. PathGuard is the authority on what may sit
+  // inside the vault; the old substring test for ".." also refused the
+  // perfectly legitimate folder "notes..archive".
   function folderValue(value) {
     var folder = String(value || "").trim().replace(/^\/+|\/+$/g, "")
-    if (folder === ".") return ""
-    if (folder === "" || folder.indexOf("..") >= 0 || folder.indexOf("\\") >= 0) return null
-    return folder
+    if (folder === "" || folder === ".") return ""
+    if (folder.indexOf("\\") >= 0) return null
+    var safe = PathGuard.safeRel(folder)
+    return safe === "" ? null : safe
   }
 
   function noteFileName(value) {
@@ -275,7 +347,8 @@ Panel {
   readonly property string noteDirectory: {
     if (currentNote === "") return vaultPath
     var i = currentNote.lastIndexOf("/")
-    return i >= 0 ? vaultPath + "/" + currentNote.slice(0, i) : vaultPath
+    if (i < 0) return vaultPath
+    return PathGuard.inVault(vaultPath, currentNote.slice(0, i)) || vaultPath
   }
 
   function dirUrl(p) {
@@ -321,12 +394,14 @@ Panel {
     if (nextName === ".md") { actionError = "Enter a note name."; return }
     var folder = currentNote.lastIndexOf("/") >= 0 ? currentNote.slice(0, currentNote.lastIndexOf("/")) : ""
     var nextRel = folder === "" ? nextName : folder + "/" + nextName
+    var nextAbs = PathGuard.inVault(vaultPath, nextRel)
+    if (nextAbs === "") { actionError = "Use a name inside the vault."; return }
     for (var i = 0; i < notes.length; i++) if (notes[i].rel === nextRel) { actionError = "A note with that name already exists."; return }
     if (nextRel !== currentNote) {
       flushSave()
       actionError = ""
       renameProc.oldPath = pendingAbsPath
-      renameProc.newPath = vaultPath + "/" + nextRel
+      renameProc.newPath = nextAbs
       renameProc.running = true
     }
     setEditMode(false)
@@ -363,10 +438,14 @@ Panel {
     if (file === ".md") { actionError = "Enter a note title."; return }
     if (folder === null) { actionError = "Use a folder inside the vault."; return }
     var rel = folder === "" ? file : folder + "/" + file
+    var absPath = PathGuard.inVault(vaultPath, rel)
+    if (absPath === "") { actionError = "Use a folder inside the vault."; return }
     for (var i = 0; i < notes.length; i++) if (notes[i].rel === rel) { actionError = "A note with that name already exists."; return }
-    createProc.folder = folder === "" ? vaultPath : vaultPath + "/" + folder
-    createProc.path = vaultPath + "/" + rel
-    createProc.content = ""
+    // An empty folder means the vault root itself, which inVault rejects as an
+    // empty relative path; mkdir -p still needs a real directory to target.
+    createProc.folder = folder === "" ? vaultPath : PathGuard.inVault(vaultPath, folder)
+    createProc.path = absPath
+    createProc.body = ""
     resetFocus("header")
     createProc.running = true
   }
@@ -378,10 +457,12 @@ Panel {
     var file = currentNote.slice(currentNote.lastIndexOf("/") + 1)
     var nextRel = folder === "" ? file : folder + "/" + file
     if (nextRel === currentNote) { actionError = "Choose a different folder."; return }
+    var nextAbs = PathGuard.inVault(vaultPath, nextRel)
+    if (nextAbs === "") { actionError = "Use a folder inside the vault."; return }
     for (var i = 0; i < notes.length; i++) if (notes[i].rel === nextRel) { actionError = "A note already exists there."; return }
     flushSave()
     moveProc.oldPath = pendingAbsPath
-    moveProc.newPath = vaultPath + "/" + nextRel
+    moveProc.newPath = nextAbs
     moveProc.nextRel = nextRel
     resetFocus("header")
     moveProc.running = true
@@ -396,6 +477,14 @@ Panel {
   property bool pendingDropdown: false
 
   function switchTo(rel, keepOpen) {
+    // Defence in depth: callers are expected to have vetted rel already, but
+    // every path that reaches FileView goes through PathGuard so no future
+    // caller can reintroduce a traversal by forgetting to check.
+    var absPath = PathGuard.inVault(vaultPath, rel)
+    if (rel !== "" && absPath === "") {
+      actionError = "That note path is outside the vault."
+      return
+    }
     if (rel === currentNote) {
       dropdownOpen = false
       resetFocus("header")
@@ -408,7 +497,7 @@ Panel {
     if (!keepOpen) dropdownOpen = false
     loadingNote = true
     currentNote = rel
-    pendingAbsPath = rel === "" ? "" : vaultPath + "/" + rel
+    pendingAbsPath = absPath
     if (pendingAbsPath !== "") {
       noteFile.path = pendingAbsPath
     } else {
@@ -453,8 +542,21 @@ Panel {
   }
 
   function handleExternalChange() {
-    if (loadingNote || dirty || pendingAbsPath === "") return
-    if (noteFile.path === pendingAbsPath) noteFile.reload()
+    if (loadingNote || pendingAbsPath === "") return
+    if (noteFile.path !== pendingAbsPath) return
+    if (dirty) {
+      // Somebody else wrote the note while we held unsaved edits. Reloading now
+      // would throw ours away, and staying silent meant the next autosave
+      // silently overwrote theirs. Say so instead, and keep their version
+      // around so the note can be recovered.
+      if (root.externalConflict) return
+      root.externalConflict = true
+      root.conflictingText = noteFile.text()
+      root.actionMessage = "This note changed elsewhere. Reload to take theirs, or keep editing to overwrite."
+      root.actionMessageTimer.restart()
+      return
+    }
+    noteFile.reload()
   }
 
   function renderView() {
@@ -538,11 +640,6 @@ function toggleTask(lineNo, wasChecked) {
 
   function rescanNotes() {
     if (!scanProc.running) scanProc.running = true
-  }
-
-  function checkAutoDeleteTasks() {
-    autoDeleteProc.vault = vaultPath
-    if (!autoDeleteProc.running) autoDeleteProc.running = true
   }
 
   function toggleDropdown() {
@@ -743,7 +840,7 @@ function toggleTask(lineNo, wasChecked) {
       if (settingsIndex === 0) {
         if (draftVaultPath !== vaultPathRaw) applyVaultPath(draftVaultPath)
         else settingsOpen = false
-      } else if (settingsIndex === 1) linkOpener.running = true
+      } else if (settingsIndex === 1) vaultPickerProc.running = true
       else if (settingsIndex === 2) rescanNotes()
       else if (settingsIndex === 3) applyVaultPath("")
       else if (settingsIndex === 4) hotKeysOpen = true
@@ -875,6 +972,8 @@ function toggleTask(lineNo, wasChecked) {
       }
     }
     notes = arr
+    notesTruncated = !vaultMissing && arr.length >= root.scanMaxNotes
+    if (notesTruncated) { actionMessage = noteTruncationMessage(); actionMessageTimer.restart() }
     var folderMap = { "": true }
     for (var f = 0; f < arr.length; f++) {
       var path = arr[f].rel
@@ -905,7 +1004,6 @@ function toggleTask(lineNo, wasChecked) {
   onStateResolvedChanged: {
     if (stateResolved) {
       rescanNotes()
-      checkAutoDeleteTasks()
     }
   }
 
@@ -916,14 +1014,6 @@ function toggleTask(lineNo, wasChecked) {
   }
 
   Timer {
-    id: autoDeleteTimer
-    interval: 86400000
-    running: true
-    repeat: true
-    onTriggered: root.checkAutoDeleteTasks()
-  }
-
-  Timer {
     id: searchDebounceTimer
     interval: root.searchDebounceMs
     repeat: false
@@ -931,24 +1021,23 @@ function toggleTask(lineNo, wasChecked) {
   }
 
   Process {
-    id: autoDeleteProc
-    property string vault: ""
-    command: {
-      var scriptPath = Qt.resolvedUrl("nether_auto_delete.py").toLocalFile()
-      return ["python3", scriptPath, vault]
-    }
-    onExited: function(exitCode) {
-      // noteFile has watchChanges: true, will auto-reload on external change
-    }
-  }
-
-  Process {
     id: contentSearchProc
     property string query: ""
     property string vault: ""
     command: {
-      return ["rg", "--json", "--no-heading", "--line-number", "--smart-case",
-              "--glob", "*.md", "--glob", "!.obsidian/**", query, vault]
+      // head -c is the hard producer-side bound the shell is missing: without
+      // it a broad query over a large vault streams unbounded --json into a
+      // long-lived process. It closes the pipe early, so rg takes SIGPIPE.
+      // "$@" keeps the query out of the script text entirely; -e before --
+      // makes the query a pattern even when it starts with "-", and -- stops
+      // anything after it being read as an option.
+      return ["bash", "-c", 'exec rg "$@" | head -c ' + root.contentSearchMaxBytes, "bash",
+              "--json", "--no-heading", "--line-number", "--smart-case",
+              "--max-count", String(root.contentSearchMaxSnippetsPerFile),
+              "--max-filesize", String(root.contentSearchMaxFileSize),
+              "--max-depth", String(root.contentSearchMaxDepth),
+              "--glob", "*.md", "--glob", "!.obsidian/**",
+              "-e", query, "--", vault]
     }
     stdout: StdioCollector {
       waitForEnd: true
@@ -957,7 +1046,11 @@ function toggleTask(lineNo, wasChecked) {
   }
 
   Process {
-    id: linkOpener
+    id: linkLaunchProc
+  }
+
+  Process {
+    id: vaultPickerProc
     command: ["bash", "-c",
       'if command -v zenity >/dev/null 2>&1; then zenity --file-selection --directory --title="Select Obsidian Vault"; ' +
       'elif command -v kdialog >/dev/null 2>&1; then kdialog --getexistingdirectory --title "Select Obsidian Vault"; fi']
@@ -978,7 +1071,7 @@ function toggleTask(lineNo, wasChecked) {
   Process {
     id: scanProc
     command: ["bash", "-c",
-      'if [ ! -d "$1" ]; then printf "__MISSING__\\n"; exit 0; fi; find "$1" -type f -name "*.md" -not -path "*/.obsidian/*" -printf "%P\\n" | sort',
+      'if [ ! -d "$1" ]; then printf "__MISSING__\\n"; exit 0; fi; find "$1" -type f -name "*.md" -not -path "*/.obsidian/*" -printf "%P\\n" | sort | head -n ' + root.scanMaxNotes,
       "bash", root.vaultPath]
     stdout: StdioCollector {
       waitForEnd: true
@@ -990,8 +1083,13 @@ function toggleTask(lineNo, wasChecked) {
     id: createProc
     property string folder: ""
     property string path: ""
-    property string content: ""
-    command: ["bash", "-c", "mkdir -p -- \"$1\" && printf '%s' \"$2\" > \"$3\"", "bash", folder, content, path]
+    property string body: ""
+    // The body goes in over stdin rather than as an argument: argv is readable
+    // in /proc/<pid>/cmdline by anything running as this user, and it is bounded
+    // by ARG_MAX, so a large note could fail to be created at all. mkdir still
+    // creates the directory; the redirect is the shell's.
+    command: ["bash", "-c", "mkdir -p -- \"$1\" && cat > \"$2\"", "bash", folder, path]
+    onStarted: write(body)
     onExited: function(exitCode) {
       if (exitCode !== 0) { root.actionError = "Could not create the note."; return }
       var rel = path.slice(root.vaultPath.length + 1)
@@ -1059,28 +1157,6 @@ function toggleTask(lineNo, wasChecked) {
     }
   }
 
-  Process {
-    id: saveSettingsProc
-    property string value: ""
-    command: {
-      var py = [
-        'import json,sys',
-        'p=sys.argv[1];vid=sys.argv[2];val=sys.argv[3]',
-        'd=json.load(open(p))',
-        'for sec in d.get("bar",{}).get("layout",{}).values():',
-        '    if isinstance(sec,list):',
-        '        for e in sec:',
-        '            if isinstance(e,dict) and e.get("id")==vid:',
-        '                e["vaultPath"]=val',
-        'json.dump(d,open(p,"w"),indent=2)',
-        'open(p,"a").write("\\n")'
-      ]
-      return ["python3", "-c", py.join("\n"),
-              home + "/.config/omarchy/shell.json",
-              "veilios.nether", value]
-    }
-  }
-
   FileView {
     id: stateFile
     path: Quickshell.stateDir + "/veilios.nether.state.json"
@@ -1118,7 +1194,11 @@ function toggleTask(lineNo, wasChecked) {
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
 
+    // Only a path the vault scan actually produced is accepted. Any process
+    // running as the user can reach this socket, and noteFile both reads and
+    // writes its path, so an unchecked rel was an arbitrary file read/write.
     function selectNote(rel: string): string {
+      if (!PathGuard.isKnownNote(root.notes, rel)) return "unknown-note"
       root.switchTo(rel)
       return "ok"
     }
@@ -1142,7 +1222,8 @@ function toggleTask(lineNo, wasChecked) {
         dirty: root.dirty,
         notes: root.notes.length,
         vaultMissing: root.vaultMissing,
-        vault: root.vaultPath,
+        notesTruncated: root.notesTruncated,
+        externalConflict: root.externalConflict,
         colH: Math.round(panelColumn.implicitHeight),
         cardH: Math.round(panel.contentHeight),
         cardW: Math.round(panel.contentWidth)
@@ -1811,7 +1892,7 @@ if (event.key === Qt.Key_Space) {
             Repeater {
               model: [
                 { label: "SAVE", act: function() { if (root.draftVaultPath !== root.vaultPathRaw) root.applyVaultPath(root.draftVaultPath); else root.settingsOpen = false } },
-                { label: "LOCATE", act: function() { linkOpener.running = true } },
+                { label: "LOCATE", act: function() { vaultPickerProc.running = true } },
                 { label: "REFRESH", act: function() { root.rescanNotes() } },
                 { label: "DISCONNECT", act: function() { root.applyVaultPath("") } },
                 { label: "HOT KEYS", act: function() { root.hotKeysOpen = true } }
@@ -2429,8 +2510,15 @@ if (event.key === Qt.Key_Space) {
               }
             }
             onLinkActivated: function(link) {
-              linkOpener.command = ["xdg-open", link]
-              linkOpener.running = true
+              // Note bodies are untrusted (a vault can be synced or shared), so
+              // a link may not pick its own handler: an unfiltered file: link
+              // would hand an arbitrary local path to whatever the desktop has
+              // registered for it. PathGuard restricts this to http/https/mailto
+              // and refuses targets xdg-open would read as an option.
+              var allowed = PathGuard.linkAllowed(link)
+              if (allowed === "") return
+              linkLaunchProc.command = ["xdg-open", allowed]
+              linkLaunchProc.running = true
             }
           }
 
@@ -2553,10 +2641,10 @@ if (event.key === Qt.Key_Space) {
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
               onClicked: {
-                linkOpener.command = ["bash", "-c",
+                vaultPickerProc.command = ["bash", "-c",
                   'if command -v zenity >/dev/null 2>&1; then zenity --file-selection --directory --title="Select Obsidian Vault"; ' +
                   'elif command -v kdialog >/dev/null 2>&1; then kdialog --getexistingdirectory --title "Select Obsidian Vault"; fi']
-                linkOpener.running = true
+                vaultPickerProc.running = true
               }
             }
           }
