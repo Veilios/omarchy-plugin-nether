@@ -124,6 +124,30 @@ Panel {
   property int footerIndex: 0
   property bool keyDebugEnabled: false
 
+  // Content search runs inside the long-lived shell process, so every stage of
+  // it is bounded. rg's own limits cut the work it does, the byte cap caps what
+  // can reach us at all, and the file/snippet caps cap what we then retain.
+  // A vault large enough to hit these is a signal to narrow the query, not a
+  // reason to spend the shell's memory on it.
+  readonly property int contentSearchMaxFiles: 200
+  readonly property int contentSearchMaxSnippetsPerFile: 3
+  readonly property int contentSearchMaxBytes: 4000000
+  readonly property int contentSearchMaxFileSize: 2 * 1024 * 1024
+  readonly property int contentSearchMaxDepth: 24
+  property bool contentSearchTruncated: false
+  // The note scan is bounded too, for the same reason: a vault with a very
+  // large number of notes would otherwise grow an unbounded list in the
+  // shell. head -n is used rather than head -c so the list is never cut
+  // mid-path, which would invent a note that does not exist.
+  readonly property int scanMaxNotes: 20000
+  property bool notesTruncated: false
+
+  function noteTruncationMessage() {
+    if (root.notesTruncated) return "This vault has more notes than Nether lists; showing the first " + root.scanMaxNotes + "."
+    if (root.contentSearchTruncated) return "Too many matches to show — narrow the search."
+    return ""
+  }
+
   function keyLog(msg) {
     if (!keyDebugEnabled) return
     console.log("[nether] " + msg)
@@ -173,7 +197,11 @@ Panel {
 
   function performContentSearch() {
     var q = noteSearch.trim()
+    contentSearchTruncated = false
     if (q.length < 2) return
+    // A search already in flight is for a query the user has since typed past.
+    // Killing it stops its results arriving late and overwriting fresher ones.
+    if (contentSearchProc.running) contentSearchProc.kill()
     contentSearchRunning = true
     contentSearchProc.query = q
     contentSearchProc.vault = vaultPath
@@ -182,8 +210,13 @@ Panel {
 
   function onContentSearchResults(output) {
     contentSearchRunning = false
+    // head -c has already bounded this, but a truncated stream can end
+    // mid-record; treat reaching the cap as a clipped result set.
+    if (String(output).length >= root.contentSearchMaxBytes) contentSearchTruncated = true
     var lines = String(output).split("\n")
     var contentMatches = {}
+    var files = 0
+    var dropped = 0
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i].trim()
       if (!line) continue
@@ -196,16 +229,23 @@ Panel {
           // decide whether it is a real in-vault path.
           var rel = absPath.indexOf(vaultPath + "/") === 0 ? absPath.slice(vaultPath.length + 1) : ""
           if (rel !== "" && PathGuard.safeRel(rel) !== "") {
+            if (!contentMatches[rel]) {
+              files++
+              // Stop accumulating once we have enough files, and drop the
+              // remainder rather than growing an object no dropdown will show.
+              if (files > root.contentSearchMaxFiles) { dropped++; continue }
+            }
             var snippet = parsed.data.lines.text.trim()
-            if (!contentMatches[rel]) contentMatches[rel] = []
-            if (contentMatches[rel].length < 3) {
+            if (contentMatches[rel].length < root.contentSearchMaxSnippetsPerFile) {
               contentMatches[rel].push({ line: parsed.data.line_number, text: snippet })
             }
           }
         }
       } catch (e) {}
     }
+    if (dropped > 0) contentSearchTruncated = true
     mergeSearchResults(contentMatches)
+    if (contentSearchTruncated) { actionMessage = noteTruncationMessage(); actionMessageTimer.restart() }
   }
 
   function mergeSearchResults(contentMatches) {
@@ -915,6 +955,8 @@ function toggleTask(lineNo, wasChecked) {
       }
     }
     notes = arr
+    notesTruncated = !vaultMissing && arr.length >= root.scanMaxNotes
+    if (notesTruncated) { actionMessage = noteTruncationMessage(); actionMessageTimer.restart() }
     var folderMap = { "": true }
     for (var f = 0; f < arr.length; f++) {
       var path = arr[f].rel
@@ -966,8 +1008,19 @@ function toggleTask(lineNo, wasChecked) {
     property string query: ""
     property string vault: ""
     command: {
-      return ["rg", "--json", "--no-heading", "--line-number", "--smart-case",
-              "--glob", "*.md", "--glob", "!.obsidian/**", query, vault]
+      // head -c is the hard producer-side bound the shell is missing: without
+      // it a broad query over a large vault streams unbounded --json into a
+      // long-lived process. It closes the pipe early, so rg takes SIGPIPE.
+      // "$@" keeps the query out of the script text entirely; -e before --
+      // makes the query a pattern even when it starts with "-", and -- stops
+      // anything after it being read as an option.
+      return ["bash", "-c", 'exec rg "$@" | head -c ' + root.contentSearchMaxBytes, "bash",
+              "--json", "--no-heading", "--line-number", "--smart-case",
+              "--max-count", String(root.contentSearchMaxSnippetsPerFile),
+              "--max-filesize", String(root.contentSearchMaxFileSize),
+              "--max-depth", String(root.contentSearchMaxDepth),
+              "--glob", "*.md", "--glob", "!.obsidian/**",
+              "-e", query, "--", vault]
     }
     stdout: StdioCollector {
       waitForEnd: true
@@ -1001,7 +1054,7 @@ function toggleTask(lineNo, wasChecked) {
   Process {
     id: scanProc
     command: ["bash", "-c",
-      'if [ ! -d "$1" ]; then printf "__MISSING__\\n"; exit 0; fi; find "$1" -type f -name "*.md" -not -path "*/.obsidian/*" -printf "%P\\n" | sort',
+      'if [ ! -d "$1" ]; then printf "__MISSING__\\n"; exit 0; fi; find "$1" -type f -name "*.md" -not -path "*/.obsidian/*" -printf "%P\\n" | sort | head -n ' + root.scanMaxNotes,
       "bash", root.vaultPath]
     stdout: StdioCollector {
       waitForEnd: true
