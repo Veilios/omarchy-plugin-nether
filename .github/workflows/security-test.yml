@@ -12,19 +12,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Node
+        uses: actions/setup-node@v4
         with:
-          python-version: "3.8"
-
-      - name: Run security tests
-        run: |
-          cd ${{ github.workspace }}
-          python3 tests/test_symlink_protection.py
+          node-version: "20"
 
       - name: Validate plugin manifest
         run: |
-          echo "Manifest validation would run here if omarchy CLI available"
+          python3 - <<'PY'
+          import json, os, sys
+          m = json.load(open("manifest.json"))
+          missing = [k for k in ("schemaVersion", "id", "name", "version", "author", "license", "description") if not m.get(k)]
+          if missing:
+              sys.exit("manifest.json missing required keys: %s" % ", ".join(missing))
+          entry = m.get("entryPoints", {}).get("barWidget")
+          if not entry or not os.path.isfile(entry):
+              sys.exit("entryPoints.barWidget does not point at a real file: %r" % entry)
+          print("manifest ok: %s %s -> %s" % (m["id"], m["version"], entry))
+          PY
 
       - name: Lint QML
         run: |

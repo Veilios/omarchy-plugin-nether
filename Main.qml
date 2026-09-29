@@ -540,11 +540,6 @@ function toggleTask(lineNo, wasChecked) {
     if (!scanProc.running) scanProc.running = true
   }
 
-  function checkAutoDeleteTasks() {
-    autoDeleteProc.vault = vaultPath
-    if (!autoDeleteProc.running) autoDeleteProc.running = true
-  }
-
   function toggleDropdown() {
     var opening = !dropdownOpen
     closeCards()
@@ -905,7 +900,6 @@ function toggleTask(lineNo, wasChecked) {
   onStateResolvedChanged: {
     if (stateResolved) {
       rescanNotes()
-      checkAutoDeleteTasks()
     }
   }
 
@@ -916,30 +910,10 @@ function toggleTask(lineNo, wasChecked) {
   }
 
   Timer {
-    id: autoDeleteTimer
-    interval: 86400000
-    running: true
-    repeat: true
-    onTriggered: root.checkAutoDeleteTasks()
-  }
-
-  Timer {
     id: searchDebounceTimer
     interval: root.searchDebounceMs
     repeat: false
     onTriggered: root.performContentSearch()
-  }
-
-  Process {
-    id: autoDeleteProc
-    property string vault: ""
-    command: {
-      var scriptPath = Qt.resolvedUrl("nether_auto_delete.py").toLocalFile()
-      return ["python3", scriptPath, vault]
-    }
-    onExited: function(exitCode) {
-      // noteFile has watchChanges: true, will auto-reload on external change
-    }
   }
 
   Process {

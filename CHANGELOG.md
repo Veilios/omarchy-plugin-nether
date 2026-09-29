@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-09-29
+
+### Removed
+- **Auto-delete of completed tasks** (the daily vault rewrite), along with
+  `nether_auto_delete.py` and `tests/test_symlink_protection.py`
+  - The feature was opt-in by nobody: it ran on every shell start and every
+    24h, opening every `.md` file in the vault and writing it back through a
+    temp file + rename
+  - That rewrite discarded each note's original mode (the temp file was created
+    `0600`), so it silently stripped permissions and churned every inode in the
+    vault daily
+  - `O_NOFOLLOW` was only applied to the final path component, and the write
+    path used plain pathnames rather than the retained vault descriptor, so an
+    intermediate directory swapped for a symlink between walk and write could
+    still redirect the rewrite outside the vault
+  - A lost-update race also let the pass clobber edits made by Obsidian
+    concurrently, since the file was re-read by path rather than compared
+  - Notes are now only ever written by an explicit user action. The
+    `<!-- completed: ... -->` marker is still written when you tick a task and
+    is still round-tripped, it is simply never swept up afterwards
+
+### Security
+- Containment and input-validation hardening lands alongside the above:
+  unvalidated IPC path handling, the markdown link allowlist, shell settings
+  persistence via the shell's own API, and bounded content search. See the
+  individual entries below in subsequent releases.
+
 ## [1.1.0] - 2026-09-25
 
 ### Security
