@@ -46,7 +46,17 @@ All notable changes to this project will be documented in this file.
   vault roots. Traversal and absolute paths are refused by the helper itself as
   well as by `PathGuard.js`, since it is reachable from the shell.
 
-- `tests/test_vault_ops.py` (25 tests) plants a `.md` symlink to a file outside
+- Autosave writes through a temporary file and renames it over the note, which
+  is what `noteFile.setText()` did before writes moved into the helper — it used
+  `atomicWrites`, and `QSaveFile` is temp-file-plus-rename. An earlier version of
+  the helper truncated the note in place and read the body afterwards, so a body
+  it went on to reject (the 16 MiB cap, or a stdin error) left the note as zero
+  bytes with the save reported as failed, and any failure part way through left a
+  partial note. Both were regressions against the atomic behaviour the plugin
+  already had, not a deliberate simplification. The note's mode is preserved
+  across the replace.
+
+- `tests/test_vault_ops.py` (30 tests) plants a `.md` symlink to a file outside
   the vault and a symlinked intermediate folder, and asserts for every operation
   that it is refused, the outside file is byte-for-byte unchanged, and nothing
   was created outside. Happy paths are covered for all five operations, so a

@@ -241,25 +241,80 @@ def op_create(vault, rel):
         os.close(vault_fd)
 
 
-def op_write(vault, rel):
-    """Overwrite an existing note's contents in place.
+def _mkstemp_nofollow(parent_fd):
+    """Create a temp file next to the target, anchored on its dir_fd.
 
-    O_NOFOLLOW still applies, so if the note was replaced by a symlink between
-    being opened and being saved, this refuses rather than writing through it.
+    tempfile.mkstemp only takes a directory *pathname*, which would throw away
+    the descriptor we carefully opened no-follow and reintroduce the
+    redirection this module exists to prevent. So the name is generated here and
+    opened O_CREAT|O_EXCL|O_NOFOLLOW against the descriptor instead.
+    """
+    for _ in range(8):
+        name = ".nether-%s.tmp" % os.urandom(6).hex()
+        try:
+            fd = os.open(
+                name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                0o600,
+                dir_fd=parent_fd,
+            )
+            return fd, name
+        except OSError as exc:
+            if exc.errno == errno.EEXIST:
+                continue
+            raise
+    raise Refused("could not create a temporary file in the vault")
+
+
+def op_write(vault, rel):
+    """Replace a note's contents, atomically.
+
+    The write goes to a temporary file and is then renamed over the note, which
+    is what noteFile.setText() did before writes moved into this helper -- it
+    used atomicWrites, and QSaveFile is temp-file-plus-rename. Truncating the
+    note in place instead would have meant any failure part way through left a
+    partial note, and would have been a regression rather than a refactor.
+
+    Reading the body first also matters: an earlier version opened the note with
+    O_TRUNC and then read stdin, so a body it went on to reject -- the 16 MiB
+    cap, or a stdin error -- left the note as zero bytes with the save reported
+    as failed.
     """
     parts = _split_rel(rel)
+    data = _read_stdin()
     vault_fd = _open_vault(vault)
     try:
         parent_fd, name = _open_parent(vault_fd, parts)
         try:
-            fd = _open_existing(parent_fd, name, os.O_WRONLY | os.O_TRUNC)
+            # Confirm the note is a real file and keep its mode, so replacing
+            # it does not silently reset permissions or drop a setuid bit.
+            probe = _open_existing(parent_fd, name, os.O_RDONLY)
             try:
-                data = _read_stdin()
-                if data:
-                    os.write(fd, data)
-                os.fsync(fd)
+                mode = stat.S_IMODE(os.fstat(probe).st_mode)
             finally:
-                os.close(fd)
+                os.close(probe)
+
+            tmp_fd, tmp_name = _mkstemp_nofollow(parent_fd)
+            try:
+                try:
+                    if data:
+                        os.write(tmp_fd, data)
+                    os.fsync(tmp_fd)
+                finally:
+                    os.close(tmp_fd)
+                os.chmod(tmp_name, mode, dir_fd=parent_fd, follow_symlinks=False)
+
+                # rename(2) cannot be redirected by a symlink at the target: it
+                # replaces whatever is there rather than following it, and both
+                # sides are anchored on the descriptor we opened no-follow.
+                os.replace(tmp_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+                tmp_name = None
+            finally:
+                if tmp_name is not None:
+                    try:
+                        os.unlink(tmp_name, dir_fd=parent_fd)
+                    except OSError:
+                        pass
             _fsync_dir(parent_fd)
         finally:
             os.close(parent_fd)

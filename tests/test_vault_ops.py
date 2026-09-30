@@ -409,6 +409,57 @@ def test_symlinked_folder_is_a_clean_refusal_not_a_raw_errno():
         env.close()
 
 
+def test_rejected_body_leaves_the_note_intact():
+    """The bug this covers: op_write used to open O_TRUNC and only then read
+    stdin, so a body it went on to reject left the note as zero bytes with the
+    save reported as failed. Silent data loss."""
+    env = Env(dest_link=False, intermediate_link=False)
+    try:
+        original = open(env.existing, "rb").read()
+        r = run("write", env.vault, "existing.md", stdin=b"x" * (17 * 1024 * 1024))
+        assert r.returncode != 0, "an oversized body was accepted"
+        assert open(env.existing, "rb").read() == original, (
+            "the note was truncated by a write that then failed"
+        )
+        assert os.path.getsize(env.existing) > 0, "the note was emptied"
+    finally:
+        env.close()
+
+
+def test_failed_write_leaves_no_temp_files_behind():
+    env = Env(dest_link=False, intermediate_link=False)
+    try:
+        before = sorted(os.listdir(env.vault))
+        r = run("write", env.vault, "existing.md", stdin=b"x" * (17 * 1024 * 1024))
+        assert r.returncode != 0
+        assert sorted(os.listdir(env.vault)) == before, "a temp file was left behind"
+    finally:
+        env.close()
+
+
+def test_write_preserves_the_notes_permissions():
+    env = Env(dest_link=False, intermediate_link=False)
+    try:
+        os.chmod(env.existing, 0o640)
+        r = run("write", env.vault, "existing.md", stdin=b"# updated\n")
+        assert r.returncode == 0, "write failed: %r" % r.stderr
+        mode = os.stat(env.existing).st_mode & 0o777
+        assert mode == 0o640, "permissions changed to %o" % mode
+    finally:
+        env.close()
+
+
+def test_write_leaves_no_temp_files_on_success():
+    env = Env(dest_link=False, intermediate_link=False)
+    try:
+        before = sorted(os.listdir(env.vault))
+        r = run("write", env.vault, "existing.md", stdin=b"# updated\n")
+        assert r.returncode == 0
+        assert sorted(os.listdir(env.vault)) == before
+    finally:
+        env.close()
+
+
 def main():
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
