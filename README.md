@@ -174,6 +174,17 @@ is byte-for-byte unchanged, and that nothing appeared outside the vault. The
 same suite passes 6/25 against the previous path-based implementation, which is
 how the tests are shown to be testing something rather than passing vacuously.
 
+## How Nether displays vault content
+
+Note names, folder paths and search snippets are rendered as **plain text**. QML's
+`Text` defaults to `AutoText`, which renders a string that looks like markup as
+markup — including `<img src="...">`, which makes Qt fetch that URL. Because a
+vault can arrive by clone or sync, a note *name* is attacker-controlled, and
+without this a mere listing of your notes would make the shell fetch something on
+behalf of whoever wrote them.
+
+Note *bodies* are rendered as markdown, deliberately: that is what a note is.
+
 ## Limits
 
 Search and the note list are bounded, because both run inside the long-lived

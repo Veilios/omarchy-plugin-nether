@@ -66,6 +66,29 @@ All notable changes to this project will be documented in this file.
   and a symlink pointing at `/` is still refused even when reached through a
   link.
 
+- Vault filenames, folder paths and search snippets are rendered with
+  `textFormat: Text.PlainText`. `Text` defaults to `AutoText`, which treats a
+  string that looks like markup as markup — including `<img src="...">`, which
+  makes Qt fetch that URL — so simply listing a note could make the long-lived
+  shell fetch something of the vault author's choosing. Verified: with `AutoText`
+  a `Text` fetched `http://127.0.0.1/track.png` from its own content; with
+  `PlainText` the identical string fetched nothing.
+
+  The report named the note list and the search snippets. A sweep of both QML
+  files found seven places rendering vault content with the default, four more
+  than were reported: the note title in the header, the folder section header,
+  both folder grids, and the "Moving:" line. All seven now state their
+  textFormat. Note bodies are left as `Text.MarkdownText`, which is deliberate —
+  rendering markdown is the point of the plugin — but it is now explicit rather
+  than inherited.
+
+- `tests/test_untrusted_text.py` is a static guard: any `Text` binding
+  vault-derived content must state its `textFormat`, and setting one on a
+  `TextInput` (which has no such property and is plain text already) is an
+  error. Both directions are checked against the previous file, which reports
+  seven problems. The `TextInput` half exists because that mistake was made
+  while fixing the first half, and `qmllint --bare` did not catch it.
+
 - `tests/test_vault_ops.py` (32 tests) plants a `.md` symlink to a file outside
   the vault and a symlinked intermediate folder, and asserts for every operation
   that it is refused, the outside file is byte-for-byte unchanged, and nothing
