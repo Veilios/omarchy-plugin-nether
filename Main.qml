@@ -485,8 +485,10 @@ Panel {
     var absPath = PathGuard.inVault(vaultPath, rel)
     if (absPath === "") { actionError = "Use a folder inside the vault."; return }
     for (var i = 0; i < notes.length; i++) if (notes[i].rel === rel) { actionError = "A note with that name already exists."; return }
-    // An empty folder means the vault root itself, which inVault rejects as an
-    // empty relative path; mkdir -p still needs a real directory to target.
+    // inVault is only the fast local check, so a bad path is reported without
+    // spawning a process. It is deliberately not the last word: the helper
+    // re-validates this same relative path against the filesystem before it
+    // writes anything.
     createProc.rel = rel
     createProc.body = ""
     resetFocus("header")
