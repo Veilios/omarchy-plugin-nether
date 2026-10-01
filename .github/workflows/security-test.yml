@@ -23,6 +23,9 @@ jobs:
       - name: Run vault operation tests
         run: python3 tests/test_vault_ops.py
 
+      - name: Check untrusted text is not rendered as rich text
+        run: python3 tests/test_untrusted_text.py
+
       - name: Validate plugin manifest
         run: |
           python3 - <<'PY'

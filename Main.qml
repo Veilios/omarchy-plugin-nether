@@ -1602,7 +1602,13 @@ if (event.key === Qt.Key_Space) {
               id: nameText
               visible: !root.editMode
               width: Math.min(implicitWidth, headerRow.width - arrowButton.width - innerRow.spacing - headerActions.width - Style.space(6) - settingsButton.width - Style.space(3) - hotKeysButton.width - Style.space(12))
+              // Vault filenames and search snippets are attacker-controlled if the vault
+              // came from a clone or a sync, and Text defaults to AutoText, which treats a
+              // string that looks like markup as rich text. That includes <img src=...>, so
+              // simply listing a note could make the long-lived shell fetch a URL of the
+              // vault author's choosing. PlainText renders it as the characters it is.
               text: root.vaultMissing ? "Vault not found" : root.noteName
+              textFormat: Text.PlainText
               elide: Text.ElideRight
               color: root.bodyText
               font.family: root.fontFamily
@@ -1814,6 +1820,7 @@ if (event.key === Qt.Key_Space) {
               anchors.verticalCenter: parent.verticalCenter
               anchors.leftMargin: Style.space(8)
               text: folderHeader.section === "" ? "VAULT" : folderHeader.section.toUpperCase()
+              textFormat: Text.PlainText
               elide: Text.ElideRight
               color: root.dimText
               font.family: root.fontFamily
@@ -1850,7 +1857,13 @@ if (event.key === Qt.Key_Space) {
 
               Text {
                 width: notesList.width * 0.5
+                // Vault filenames and search snippets are attacker-controlled if the vault
+                // came from a clone or a sync, and Text defaults to AutoText, which treats a
+                // string that looks like markup as rich text. That includes <img src=...>, so
+                // simply listing a note could make the long-lived shell fetch a URL of the
+                // vault author's choosing. PlainText renders it as the characters it is.
                 text: noteRow.modelData.name
+                textFormat: Text.PlainText
                 elide: Text.ElideMiddle
                 color: index === root.dropdownIndex || noteRow.modelData.rel === root.currentNote ? Color.accent : root.bodyText
                 font.family: root.fontFamily
@@ -1868,7 +1881,13 @@ if (event.key === Qt.Key_Space) {
               Text {
                 visible: noteRow.modelData.snippets && noteRow.modelData.snippets.length > 0
                 width: notesList.width * 0.45
+                // Vault filenames and search snippets are attacker-controlled if the vault
+                // came from a clone or a sync, and Text defaults to AutoText, which treats a
+                // string that looks like markup as rich text. That includes <img src=...>, so
+                // simply listing a note could make the long-lived shell fetch a URL of the
+                // vault author's choosing. PlainText renders it as the characters it is.
                 text: noteRow.modelData.snippets[0].text
+                textFormat: Text.PlainText
                 elide: Text.ElideRight
                 color: root.dimText
                 font.family: root.fontFamily
@@ -2119,6 +2138,7 @@ if (event.key === Qt.Key_Space) {
                   Text {
                     anchors.centerIn: parent
                     text: modelData.path === "" ? "VAULT ROOT" : modelData.path
+                    textFormat: Text.PlainText
                     color: root.bodyText
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
@@ -2308,6 +2328,7 @@ if (event.key === Qt.Key_Space) {
             wrapMode: Text.WordWrap
             elide: Text.ElideMiddle
             text: "Moving: " + root.noteName
+            textFormat: Text.PlainText
             color: root.bodyText
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
@@ -2355,6 +2376,7 @@ if (event.key === Qt.Key_Space) {
                   Text {
                     anchors.centerIn: parent
                     text: modelData.path === "" ? "VAULT ROOT" : modelData.path
+                    textFormat: Text.PlainText
                     color: root.bodyText
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
