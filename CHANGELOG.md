@@ -2,6 +2,74 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.1] - 2026-09-29
+
+### Security
+- **Every write to the vault now goes through `nether_vault.py`**, which
+  confines it to the vault. This fixes the remaining finding on submission
+  #8259 and three related ones found while checking it.
+
+  Creating a note ran `mkdir -p -- … && cat > "$2"`. Shell redirection opens
+  `O_WRONLY|O_CREAT|O_TRUNC`, which **follows a symlink at the destination**, so
+  a note name already occupied by a link pointing elsewhere had that file
+  truncated and then overwritten with note text. Verified concretely: a 34-byte
+  file became 0 bytes. The name was not even visible as taken, because the note
+  list comes from `find -type f` and a symlink is not type `f` — so the
+  duplicate-name check could not fire either.
+
+  A lexical check cannot prevent this, because it never touches the filesystem.
+  The helper opens the vault once and resolves every path component from that
+  descriptor with `O_NOFOLLOW`, so a symlinked folder fails with `ELOOP` and no
+  descriptor into the link target is ever obtained. Creating uses
+  `O_CREAT|O_EXCL`, which POSIX makes fail with `EEXIST` when the final
+  component is a symlink regardless of its target. The open that writes is the
+  same syscall that checks containment, so there is no window between validating
+  a path and using it.
+
+  The same root cause affected three paths not previously flagged:
+  - `mkdir -p … && mv` could create folders and move a note through a symlinked
+    intermediate directory
+  - `mv` on its own could move a note out through a symlinked folder
+  - `rm -f` could delete a file outside the vault through one
+
+  Autosave previously went through Quickshell's `FileView`. That is safe against
+  a symlink at the note path — it uses `QSaveFile`, whose `rename` replaces a
+  symlink rather than following it — but exposed to a symlinked folder, and
+  `FileView` offers no way to ask for `O_NOFOLLOW`. The write now goes through
+  the helper as well; `FileView` remains the reader and the change watcher, so
+  external-edit detection is unaffected.
+
+  A move onto an occupied destination is now refused rather than silently
+  replacing what was there, and a refused create removes its partial file
+  instead of leaving a zero-byte note. Moving or deleting a symlink is refused
+  rather than quietly destroying it. `/` and the home directory are rejected as
+  vault roots. Traversal and absolute paths are refused by the helper itself as
+  well as by `PathGuard.js`, since it is reachable from the shell.
+
+- Autosave writes through a temporary file and renames it over the note, which
+  is what `noteFile.setText()` did before writes moved into the helper — it used
+  `atomicWrites`, and `QSaveFile` is temp-file-plus-rename. An earlier version of
+  the helper truncated the note in place and read the body afterwards, so a body
+  it went on to reject (the 16 MiB cap, or a stdin error) left the note as zero
+  bytes with the save reported as failed, and any failure part way through left a
+  partial note. Both were regressions against the atomic behaviour the plugin
+  already had, not a deliberate simplification. The note's mode is preserved
+  across the replace.
+
+- `tests/test_vault_ops.py` (30 tests) plants a `.md` symlink to a file outside
+  the vault and a symlinked intermediate folder, and asserts for every operation
+  that it is refused, the outside file is byte-for-byte unchanged, and nothing
+  was created outside. Happy paths are covered for all five operations, so a
+  suite that refused everything would fail. Run against the previous
+  path-based implementation the suite scores 6/25, which is how it is shown to
+  detect the vulnerability rather than pass vacuously. Wired into CI.
+
+### Requirements
+- Python 3.8+ (standard library only) is required again. It is the sole
+  enforcement point for every write, fails closed, and is what confines those
+  writes to the vault. It was previously required for the auto-delete sweep,
+  which no longer exists.
+
 ## [1.2.0] - 2026-09-29
 
 ### Removed

@@ -20,6 +20,9 @@ jobs:
       - name: Run path and link guard tests
         run: node tests/test_pathguard.mjs
 
+      - name: Run vault operation tests
+        run: python3 tests/test_vault_ops.py
+
       - name: Validate plugin manifest
         run: |
           python3 - <<'PY'

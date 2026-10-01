@@ -114,6 +114,8 @@ Press `Hot Keys` button in Settings for the full categorized reference.
 - Obsidian vault with `.md` files
 - ripgrep (`rg`) for full-text content search
 - `xdg-open`, to follow links in a note
+- Python 3.8+ (stdlib only) — every write to your vault goes through
+  `nether_vault.py`, which is what confines those writes to the vault
 
 ## IPC
 
@@ -130,6 +132,37 @@ omarchy-shell veilios.nether status
 `selectNote` only accepts a path the vault scan actually produced and returns
 `unknown-note` for anything else, so the target cannot be used to read or write
 outside the vault. `status` deliberately does not report the vault path.
+
+## How Nether writes to your vault
+
+Your vault is treated as untrusted input. It may be a git clone, a synced
+folder, or something someone shared with you, so a note name inside it may
+already be occupied by a symbolic link pointing anywhere on your filesystem.
+
+Plain tools cannot defend against that. Shell redirection follows a symlink at
+the destination, and `mkdir`, `mv` and `rm` resolve every intermediate folder
+as an ordinary path lookup — so a note called `todo.md` that is secretly a link
+to your `.bashrc` would have that file truncated and overwritten. A path
+*string* check cannot see any of it, because it never looks at the filesystem.
+
+So Nether does not write with path-based tools at all. Every create, rename,
+move, delete and autosave goes through `nether_vault.py`, which opens your
+vault once and then resolves each path component from that descriptor with
+`O_NOFOLLOW`. Creating a note uses `O_CREAT|O_EXCL`, so a name already taken
+by *anything* — including a symlink — is refused rather than written through.
+The operation that writes is the same syscall that checks containment, so
+there is no window between validating a path and using it.
+
+If an operation is refused, the panel says why and nothing is written. Refusals
+also leave nothing behind: a create that cannot finish removes the partial file
+rather than leaving a zero-byte note.
+
+`tests/test_vault_ops.py` covers this. It plants a `.md` symlink pointing at a
+file outside the vault, and a symlinked intermediate folder, then asserts for
+every operation that it is refused, that the file on the other side of the link
+is byte-for-byte unchanged, and that nothing appeared outside the vault. The
+same suite passes 6/25 against the previous path-based implementation, which is
+how the tests are shown to be testing something rather than passing vacuously.
 
 ## Limits
 
