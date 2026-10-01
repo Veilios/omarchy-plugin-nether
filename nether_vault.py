@@ -71,12 +71,24 @@ def _split_rel(rel):
 
 
 def _open_vault(vault):
-    """Open a descriptor on the vault root, refusing implausible roots.
+    """Open a descriptor on the vault root.
 
-    O_NOFOLLOW applies here too: if the configured vault is itself a symlink
-    the user is told so rather than silently being redirected. A symlinked
-    vault is a legitimate thing to want, but it has to be a deliberate choice,
-    so the shell resolves it before configuring the path.
+    The vault root is outside the trust boundary. It is configuration: the user
+    named it, so it is trusted in the same way any path they type is, and
+    refusing to follow a symlink there would break a legitimate setup -- a vault
+    symlinked onto another disk, or into a synced folder -- without making
+    anything safer. So the root is resolved with realpath and opened at its
+    destination.
+
+    Everything *inside* the vault is the opposite: it can arrive by clone or sync
+    and is treated as hostile. That is why every component from here on is
+    opened relative to this descriptor with O_NOFOLLOW, so no symlink inside can
+    redirect a write. Resolving the root does not loosen that; the two halves of
+    the path are treated differently on purpose.
+
+    O_NOFOLLOW stays on the open as a cheap assertion: after resolution the
+    target is a real directory, so if this ever *did* come back ELOOP something
+    has gone wrong that is worth refusing rather than following.
     """
     if not vault:
         raise Refused("no vault configured")
@@ -85,13 +97,15 @@ def _open_vault(vault):
         raise Refused("refusing to use the filesystem root as a vault")
     try:
         return os.open(
-            vault, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+            resolved, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
         )
     except OSError as exc:
         if exc.errno in (errno.ELOOP, errno.EMLINK):
-            raise Refused("the vault path is a symbolic link")
+            raise Refused("the vault path could not be resolved to a real folder")
         if exc.errno == errno.ENOENT:
             raise Refused("no vault at that path")
+        if exc.errno == errno.ENOTDIR:
+            raise Refused("the vault path is not a folder")
         raise
 
 

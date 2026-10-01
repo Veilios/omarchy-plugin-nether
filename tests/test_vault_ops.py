@@ -334,13 +334,78 @@ def test_rejects_filesystem_root_as_vault():
         env.close()
 
 
-def test_rejects_symlinked_vault_root():
+def test_symlinked_vault_root_is_usable():
+    """A vault symlinked onto another disk, or into a synced folder, is a
+    legitimate setup and must keep working."""
     env = Env(dest_link=False, intermediate_link=False)
     try:
         link = os.path.join(env.tmp, "vaultlink")
         os.symlink(env.vault, link)
-        r = run("create", link, "x.md", stdin=b"x\n")
-        assert r.returncode != 0, "a symlinked vault root was silently accepted"
+
+        r = run("create", link, "viacreate.md", stdin=b"# via the link\n")
+        assert r.returncode == 0, "create through a symlinked vault failed: %r" % r.stderr
+        # and it landed in the real vault, not beside the link
+        assert os.path.isfile(os.path.join(env.vault, "viacreate.md"))
+
+        r = run("write", link, "existing.md", stdin=b"# written via the link\n")
+        assert r.returncode == 0, "write through a symlinked vault failed: %r" % r.stderr
+
+        r = run("move", link, "existing.md", "real/moved.md")
+        assert r.returncode == 0, "move through a symlinked vault failed: %r" % r.stderr
+        assert os.path.isfile(os.path.join(env.vault, "real/moved.md"))
+
+        r = run("delete", link, "viacreate.md")
+        assert r.returncode == 0, "delete through a symlinked vault failed: %r" % r.stderr
+    finally:
+        env.close()
+
+
+def test_symlinked_vault_root_still_contains_writes():
+    """The important half.
+
+    Allowing a symlinked *root* must not loosen anything *inside* the vault. A
+    root is configuration the user chose; its contents arrived by clone or sync
+    and are hostile. These are the same attacks as elsewhere in this file, run
+    through a symlinked root, and they must all still be refused.
+    """
+    env = Env(dest_link=True, intermediate_link=True)
+    try:
+        link = os.path.join(env.tmp, "vaultlink")
+        os.symlink(env.vault, link)
+
+        r = run("create", link, "note.md", stdin=b"attacker controlled\n")
+        assert r.returncode != 0, "create followed a symlinked note through the root"
+        assert env.secret_intact(), "the file behind the note symlink was modified"
+
+        r = run("create", link, "linkdir/x.md", stdin=b"escaped\n")
+        assert r.returncode != 0, "create descended through a symlinked folder"
+        assert env.nothing_escaped(), "a file was created outside the vault"
+
+        r = run("write", link, "note.md", stdin=b"clobbered\n")
+        assert r.returncode != 0, "write followed a symlinked note through the root"
+        assert env.secret_intact()
+
+        r = run("delete", link, "linkdir/secret.txt")
+        assert r.returncode != 0, "delete reached outside through a symlinked folder"
+        assert os.path.isfile(env.secret)
+
+        r = run("move", link, "real/inner.md", "linkdir/moved.md")
+        assert r.returncode != 0, "move escaped through a symlinked folder"
+        assert env.nothing_escaped()
+    finally:
+        env.close()
+
+
+def test_rejects_filesystem_root_behind_a_symlink():
+    """Resolving the root must not become a way to reach /."""
+    env = Env(dest_link=False, intermediate_link=False)
+    try:
+        # A symlink named believably, pointing at the filesystem root.
+        sneaky = os.path.join(env.tmp, "notes")
+        os.symlink("/", sneaky)
+        r = run("create", sneaky, "etc/nope.md", stdin=b"x\n")
+        assert r.returncode != 0, "a symlink to / was accepted as a vault"
+        assert not os.path.exists("/etc/nope.md")
     finally:
         env.close()
 
