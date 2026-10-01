@@ -56,7 +56,17 @@ All notable changes to this project will be documented in this file.
   already had, not a deliberate simplification. The note's mode is preserved
   across the replace.
 
-- `tests/test_vault_ops.py` (30 tests) plants a `.md` symlink to a file outside
+- A vault that is itself a symlink — onto another disk, or into a synced folder —
+  is usable again. The helper resolves the configured root and opens its
+  destination, because the root is configuration the user chose and refusing to
+  follow it broke a legitimate setup without making anything safer. The trust
+  boundary is explicit: the root is trusted, its contents are not. Every
+  component *inside* is still opened `O_NOFOLLOW` from a descriptor, so
+  resolving the root does not loosen the containment the reviewer asked about,
+  and a symlink pointing at `/` is still refused even when reached through a
+  link.
+
+- `tests/test_vault_ops.py` (32 tests) plants a `.md` symlink to a file outside
   the vault and a symlinked intermediate folder, and asserts for every operation
   that it is refused, the outside file is byte-for-byte unchanged, and nothing
   was created outside. Happy paths are covered for all five operations, so a

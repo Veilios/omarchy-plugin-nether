@@ -146,12 +146,22 @@ to your `.bashrc` would have that file truncated and overwritten. A path
 *string* check cannot see any of it, because it never looks at the filesystem.
 
 So Nether does not write with path-based tools at all. Every create, rename,
-move, delete and autosave goes through `nether_vault.py`, which opens your
-vault once and then resolves each path component from that descriptor with
-`O_NOFOLLOW`. Creating a note uses `O_CREAT|O_EXCL`, so a name already taken
-by *anything* — including a symlink — is refused rather than written through.
-The operation that writes is the same syscall that checks containment, so
-there is no window between validating a path and using it.
+move, delete and autosave goes through `nether_vault.py`, which resolves each
+path component from a descriptor with `O_NOFOLLOW`. Creating a note uses
+`O_CREAT|O_EXCL`, so a name already taken by *anything* — including a symlink —
+is refused rather than written through. The operation that writes is the same
+syscall that checks containment, so there is no window between validating a path
+and using it.
+
+The trust boundary is the vault root, and the two halves are treated
+differently on purpose. The root is *configuration* — you named it, so it is
+trusted like any path you type, and a vault that is a symlink onto another disk
+works. Its *contents* are hostile, because they can arrive by clone or sync,
+so every component below the root is opened no-follow. A symlink pointing at
+`/` is refused even when reached through a link.
+
+Saves are atomic: the note is written to a temporary file and renamed over the
+top, so a failure part way through leaves the previous contents intact.
 
 If an operation is refused, the panel says why and nothing is written. Refusals
 also leave nothing behind: a create that cannot finish removes the partial file
