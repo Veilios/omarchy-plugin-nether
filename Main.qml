@@ -22,7 +22,7 @@ Panel {
   // — and a vault can be a clone, a synced folder, or something shared with
   // you — while the helper resolves every component from a descriptor with
   // O_NOFOLLOW, so the open that writes is also the check that confines it.
-  readonly property string vaultHelper: Qt.resolvedUrl("nether_vault.py").toLocalFile()
+  readonly property string vaultHelper: decodeURIComponent(String(Qt.resolvedUrl("nether_vault.py")).replace(/^file:\/\//, ""))
   property bool overrideActive: false
   property string overrideValue: ""
   readonly property string vaultPathRaw: overrideActive ? overrideValue : setting("vaultPath", "~/Documents/Obsidian Vault")
@@ -264,6 +264,7 @@ Panel {
               // Stop accumulating once we have enough files, and drop the
               // remainder rather than growing an object no dropdown will show.
               if (files > root.contentSearchMaxFiles) { dropped++; continue }
+              contentMatches[rel] = []
             }
             var snippet = parsed.data.lines.text.trim()
             if (contentMatches[rel].length < root.contentSearchMaxSnippetsPerFile) {
@@ -294,7 +295,10 @@ Panel {
         nameMatches.push(item.rel)
         var existingIdx = filteredNotes.findIndex(function(x) { return x.rel === item.rel })
         if (existingIdx >= 0) {
-          filteredNotes[existingIdx].matchType = "name"
+          var named = filteredNotes[existingIdx]
+          var firstPass = filteredNotes.slice()
+          firstPass[existingIdx] = { rel: named.rel, folder: named.folder, name: named.name, matchType: "name", snippets: named.snippets }
+          filteredNotes = firstPass
         } else {
           filteredNotes.push({ rel: item.rel, folder: item.folder, name: item.name, matchType: "name", snippets: [] })
         }
@@ -312,8 +316,11 @@ Panel {
       } else {
         var idx = filteredNotes.findIndex(function(x) { return x.rel === rel })
         if (idx >= 0) {
-          filteredNotes[idx].matchType = "both"
-          filteredNotes[idx].snippets = contentMatches[rel]
+          var merged = filteredNotes[idx]
+          merged = { rel: merged.rel, folder: merged.folder, name: merged.name, matchType: "both", snippets: contentMatches[rel] }
+          var copy = filteredNotes.slice()
+          copy[idx] = merged
+          filteredNotes = copy
         }
       }
     }
@@ -1888,7 +1895,7 @@ if (event.key === Qt.Key_Space) {
                 // string that looks like markup as rich text. That includes <img src=...>, so
                 // simply listing a note could make the long-lived shell fetch a URL of the
                 // vault author's choosing. PlainText renders it as the characters it is.
-                text: noteRow.modelData.snippets[0].text
+                text: noteRow.modelData.snippets && noteRow.modelData.snippets.length > 0 ? noteRow.modelData.snippets[0].text : ""
                 textFormat: Text.PlainText
                 elide: Text.ElideRight
                 color: root.dimText
