@@ -610,7 +610,7 @@ Panel {
       root.externalConflict = true
       root.conflictingText = noteFile.text()
       root.actionMessage = "This note changed elsewhere. Reload to take theirs, or keep editing to overwrite."
-      root.actionMessageTimer.restart()
+      actionMessageTimer.restart()
       return
     }
     noteFile.reload()
@@ -1024,7 +1024,8 @@ function toggleTask(lineNo, wasChecked) {
         arr.push({
           rel: rel,
           folder: slash >= 0 ? rel.slice(0, slash) : "",
-          name: rel.slice(slash + 1).replace(/\.md$/, "")
+          name: rel.slice(slash + 1).replace(/\.md$/, ""),
+          snippets: []
         })
       }
     }
@@ -1141,7 +1142,8 @@ function toggleTask(lineNo, wasChecked) {
     property string rel: ""
     property string body: ""
     command: ["python3", root.vaultHelper, "create", root.vaultPath, rel]
-    onStarted: write(body)
+    stdinEnabled: true
+    onStarted: { write(body); stdinEnabled = false }
     stderr: StdioCollector { id: createErr; waitForEnd: true }
     onExited: function(exitCode) {
       if (exitCode !== 0) { root.actionError = root.vaultOpError(createErr.text, "Could not create the note."); return }
@@ -1220,7 +1222,8 @@ function toggleTask(lineNo, wasChecked) {
     property string rel: ""
     property string body: ""
     command: ["python3", root.vaultHelper, "write", root.vaultPath, rel]
-    onStarted: write(body)
+    stdinEnabled: true
+    onStarted: { write(body); stdinEnabled = false }
     stderr: StdioCollector { id: saveErr; waitForEnd: true }
     onExited: function(exitCode) {
       root.selfWriteSeen = false
@@ -1230,7 +1233,7 @@ function toggleTask(lineNo, wasChecked) {
         root.dirty = true
         root.externalConflict = true
         root.actionMessage = root.vaultOpError(saveErr.text, "Could not save the note.")
-        root.actionMessageTimer.restart()
+        actionMessageTimer.restart()
         return
       }
       root.noteFile.reload()
@@ -1888,14 +1891,14 @@ if (event.key === Qt.Key_Space) {
               }
 
               Text {
-                visible: noteRow.modelData.snippets && noteRow.modelData.snippets.length > 0
+                visible: !!(noteRow.modelData.snippets && noteRow.modelData.snippets.length > 0)
                 width: notesList.width * 0.45
                 // Vault filenames and search snippets are attacker-controlled if the vault
                 // came from a clone or a sync, and Text defaults to AutoText, which treats a
                 // string that looks like markup as rich text. That includes <img src=...>, so
                 // simply listing a note could make the long-lived shell fetch a URL of the
                 // vault author's choosing. PlainText renders it as the characters it is.
-                text: noteRow.modelData.snippets && noteRow.modelData.snippets.length > 0 ? noteRow.modelData.snippets[0].text : ""
+                text: !!(noteRow.modelData.snippets && noteRow.modelData.snippets.length > 0) ? noteRow.modelData.snippets[0].text : ""
                 textFormat: Text.PlainText
                 elide: Text.ElideRight
                 color: root.dimText

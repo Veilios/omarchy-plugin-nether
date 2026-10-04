@@ -73,6 +73,24 @@ def audit(path):
                             "%s guard -- helper failures must not be silent"
                             % (name, i + 1, need.pattern)
                         )
+            if any(re.search(r"\bwrite\s*\(", b) for b in body):
+                # Process.write() delivers bytes but never closes stdin, and
+                # the helper reads note bodies until EOF. Without
+                # stdinEnabled: true at declaration and stdinEnabled = false
+                # inside onStarted, create/save hang forever and report
+                # nothing. See tests/test_stdin_contract.py and the bug where
+                # create did nothing and autosave silently dropped edits.
+                if not any(re.search(r"stdinEnabled\s*:\s*true", b) for b in body):
+                    problems.append(
+                        "%s:%d  Process calling write() does not declare "
+                        "`stdinEnabled: true`" % (name, i + 1)
+                    )
+                if not any(re.search(r"stdinEnabled\s*=\s*false", b) for b in body):
+                    problems.append(
+                        "%s:%d  Process calling write() never sets "
+                        "`stdinEnabled = false`, so the helper waits on stdin "
+                        "EOF that never arrives" % (name, i + 1)
+                    )
     # The definition itself must not use the broken idiom.
     for i, line in enumerate(lines):
         if re.search(r"property string vaultHelper", line) and "toLocalFile" in line:
