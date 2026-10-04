@@ -5,7 +5,7 @@
   "version": "1.2.1",
   "author": "veilios",
   "license": "MIT",
-  "description": "Read and edit notes from your Obsidian vault. Last-open note is restored across reboots.",
+  "description": "Obsidian vault notes in your Omarchy bar. Read, edit, search, and manage Markdown notes without leaving your desktop.\n\nFeatures\nBar widget — Open your notes from the bar panel\nFull Markdown rendering — Headers, lists, code, blockquotes, tables, tasks\nVault folder navigation — Create, move, and organize notes\nSearch — Fuzzy search note names and content (Ctrl+S)\nAuto-save — Edits persist instantly; read-only on switch\nKeyboard support — mostly navigable with just the keyboard, as dhh intended",
   "kinds": [
     "bar-widget"
   ],
