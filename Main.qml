@@ -1168,7 +1168,7 @@ function toggleTask(lineNo, wasChecked) {
       root.persistState()
       root.renameDraft = root.noteName
       root.actionError = ""
-      root.noteFile.path = root.pendingAbsPath
+      noteFile.path = root.pendingAbsPath
       root.rescanNotes()
     }
   }
@@ -1186,7 +1186,7 @@ function toggleTask(lineNo, wasChecked) {
       root.persistState()
       root.moveOpen = false
       root.actionError = ""
-      root.noteFile.path = root.pendingAbsPath
+      noteFile.path = root.pendingAbsPath
       root.resetFocus("header")
       root.rescanNotes()
     }
@@ -1202,10 +1202,10 @@ function toggleTask(lineNo, wasChecked) {
       root.currentNote = ""
       root.pendingAbsPath = ""
       root.rawText = ""
-      root.noteView.setSource("")
+      noteView.setSource("")
       root.deleteConfirmOpen = false
       root.editMode = false
-      root.editor.text = ""
+      editor.text = ""
       root.persistState()
       root.resetFocus("header")
       root.rescanNotes()
@@ -1236,7 +1236,7 @@ function toggleTask(lineNo, wasChecked) {
         actionMessageTimer.restart()
         return
       }
-      root.noteFile.reload()
+      noteFile.reload()
     }
   }
 
@@ -1579,7 +1579,7 @@ if (event.key === Qt.Key_Space) {
               root.closeCards()
               root.quickKeysOpen = opening
               root.keyboardSection = opening ? "quickKeys" : "header"
-              root.keyCatcher.forceActiveFocus()
+              keyCatcher.forceActiveFocus()
             }
           }
         }
@@ -1803,7 +1803,7 @@ if (event.key === Qt.Key_Space) {
                 root.dropdownOpen = false; root.resetFocus("header"); event.accepted = true
               } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
                 root.keyboardSection = "search"
-                root.keyCatcher.forceActiveFocus()
+                keyCatcher.forceActiveFocus()
                 event.accepted = true
               } else root.handleShortcut(event)
             }
@@ -1979,10 +1979,10 @@ if (event.key === Qt.Key_Space) {
               Keys.onPressed: function(event) {
                 if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
                   root.keyboardSection = "settings"
-                  root.keyCatcher.forceActiveFocus()
+                  keyCatcher.forceActiveFocus()
                   event.accepted = true
                 } else if (event.key === Qt.Key_Escape) {
-                  root.closeCards(); root.keyboardSection = "header"; root.keyCatcher.forceActiveFocus(); event.accepted = true
+                  root.closeCards(); root.keyboardSection = "header"; keyCatcher.forceActiveFocus(); event.accepted = true
                 }
               }
             }
@@ -2102,7 +2102,7 @@ if (event.key === Qt.Key_Space) {
                 if (event.key === Qt.Key_Tab || event.key === Qt.Key_Down) {
                   createFolderGrid.forceActiveFocus(); event.accepted = true
                 } else if (event.key === Qt.Key_Escape) {
-                  root.closeCards(); root.keyboardSection = "header"; root.keyCatcher.forceActiveFocus(); event.accepted = true
+                  root.closeCards(); root.keyboardSection = "header"; keyCatcher.forceActiveFocus(); event.accepted = true
                 }
               }
             }
@@ -2499,7 +2499,7 @@ if (event.key === Qt.Key_Space) {
                   event.accepted = true
                 }
               } else if (event.key === Qt.Key_Escape) {
-                root.closeCards(); root.keyboardSection = "header"; root.keyCatcher.forceActiveFocus(); event.accepted = true
+                root.closeCards(); root.keyboardSection = "header"; keyCatcher.forceActiveFocus(); event.accepted = true
               } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
                 root.cycleKeyboardFocus(event.key === Qt.Key_Backtab ? -1 : 1)
                 event.accepted = true

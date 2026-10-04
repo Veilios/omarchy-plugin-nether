@@ -473,13 +473,13 @@ Item {
       }
       Keys.onEscapePressed: {
         text = ""
-        root.taskInputEsc()
+        taskInputEsc()
       }
       Keys.onPressed: function(event) {
-        if (event.key === Qt.Key_Down) { root.taskInputTraverse(1); event.accepted = true }
-        else if (event.key === Qt.Key_Up) { root.taskInputTraverse(-1); event.accepted = true }
-        else if (event.key === Qt.Key_Tab) { root.taskInputTab(1); event.accepted = true }
-        else if (event.key === Qt.Key_Backtab) { root.taskInputTab(-1); event.accepted = true }
+        if (event.key === Qt.Key_Down) { taskInputTraverse(1); event.accepted = true }
+        else if (event.key === Qt.Key_Up) { taskInputTraverse(-1); event.accepted = true }
+        else if (event.key === Qt.Key_Tab) { taskInputTab(1); event.accepted = true }
+        else if (event.key === Qt.Key_Backtab) { taskInputTab(-1); event.accepted = true }
       }
     }
   }

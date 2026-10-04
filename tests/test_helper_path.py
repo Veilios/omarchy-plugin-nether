@@ -101,6 +101,31 @@ def audit(path):
     return problems
 
 
+# A root-scoped id (noteFile, noteView, ...) is never a property of root:
+# `root.<id>` is undefined, and any handler that dereferences it throws and
+# silently aborts the rest of the callback. Bare ids must be used.
+ID_ASSIGN = re.compile(r"^\s*id:\s*([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def root_id_references(path):
+    name = os.path.basename(path)
+    lines = open(path, encoding="utf-8").read().split("\n")
+    ids = set()
+    for line in lines:
+        m = ID_ASSIGN.match(line)
+        if m:
+            ids.add(m.group(1))
+    problems = []
+    for i, line in enumerate(lines):
+        for ident in ids:
+            if re.search(r"root\." + re.escape(ident) + r"\b", line):
+                problems.append(
+                    "%s:%d  reference to root.%s hides the failure mode where "
+                    "`root.<id>` is undefined -- use the bare id" % (name, i + 1, ident)
+                )
+    return problems
+
+
 def main():
     failures = []
     for rel in QML_FILES:
@@ -109,6 +134,7 @@ def main():
             failures.append("%s: missing" % rel)
             continue
         failures.extend(audit(path))
+        failures.extend(root_id_references(path))
     if failures:
         print("helper-path: %d problem(s)" % len(failures))
         for f in failures:
