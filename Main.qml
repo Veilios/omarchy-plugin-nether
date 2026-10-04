@@ -22,7 +22,7 @@ Panel {
   // — and a vault can be a clone, a synced folder, or something shared with
   // you — while the helper resolves every component from a descriptor with
   // O_NOFOLLOW, so the open that writes is also the check that confines it.
-  readonly property string vaultHelper: Qt.resolvedUrl("nether_vault.py").toLocalFile()
+  readonly property string vaultHelper: decodeURIComponent(String(Qt.resolvedUrl("nether_vault.py")).replace(/^file:\/\//, ""))
   property bool overrideActive: false
   property string overrideValue: ""
   readonly property string vaultPathRaw: overrideActive ? overrideValue : setting("vaultPath", "~/Documents/Obsidian Vault")
@@ -264,6 +264,7 @@ Panel {
               // Stop accumulating once we have enough files, and drop the
               // remainder rather than growing an object no dropdown will show.
               if (files > root.contentSearchMaxFiles) { dropped++; continue }
+              contentMatches[rel] = []
             }
             var snippet = parsed.data.lines.text.trim()
             if (contentMatches[rel].length < root.contentSearchMaxSnippetsPerFile) {
@@ -294,7 +295,10 @@ Panel {
         nameMatches.push(item.rel)
         var existingIdx = filteredNotes.findIndex(function(x) { return x.rel === item.rel })
         if (existingIdx >= 0) {
-          filteredNotes[existingIdx].matchType = "name"
+          var named = filteredNotes[existingIdx]
+          var firstPass = filteredNotes.slice()
+          firstPass[existingIdx] = { rel: named.rel, folder: named.folder, name: named.name, matchType: "name", snippets: named.snippets }
+          filteredNotes = firstPass
         } else {
           filteredNotes.push({ rel: item.rel, folder: item.folder, name: item.name, matchType: "name", snippets: [] })
         }
@@ -312,8 +316,11 @@ Panel {
       } else {
         var idx = filteredNotes.findIndex(function(x) { return x.rel === rel })
         if (idx >= 0) {
-          filteredNotes[idx].matchType = "both"
-          filteredNotes[idx].snippets = contentMatches[rel]
+          var merged = filteredNotes[idx]
+          merged = { rel: merged.rel, folder: merged.folder, name: merged.name, matchType: "both", snippets: contentMatches[rel] }
+          var copy = filteredNotes.slice()
+          copy[idx] = merged
+          filteredNotes = copy
         }
       }
     }
@@ -603,7 +610,7 @@ Panel {
       root.externalConflict = true
       root.conflictingText = noteFile.text()
       root.actionMessage = "This note changed elsewhere. Reload to take theirs, or keep editing to overwrite."
-      root.actionMessageTimer.restart()
+      actionMessageTimer.restart()
       return
     }
     noteFile.reload()
@@ -1017,7 +1024,8 @@ function toggleTask(lineNo, wasChecked) {
         arr.push({
           rel: rel,
           folder: slash >= 0 ? rel.slice(0, slash) : "",
-          name: rel.slice(slash + 1).replace(/\.md$/, "")
+          name: rel.slice(slash + 1).replace(/\.md$/, ""),
+          snippets: []
         })
       }
     }
@@ -1134,7 +1142,8 @@ function toggleTask(lineNo, wasChecked) {
     property string rel: ""
     property string body: ""
     command: ["python3", root.vaultHelper, "create", root.vaultPath, rel]
-    onStarted: write(body)
+    stdinEnabled: true
+    onStarted: { write(body); stdinEnabled = false }
     stderr: StdioCollector { id: createErr; waitForEnd: true }
     onExited: function(exitCode) {
       if (exitCode !== 0) { root.actionError = root.vaultOpError(createErr.text, "Could not create the note."); return }
@@ -1159,7 +1168,7 @@ function toggleTask(lineNo, wasChecked) {
       root.persistState()
       root.renameDraft = root.noteName
       root.actionError = ""
-      root.noteFile.path = root.pendingAbsPath
+      noteFile.path = root.pendingAbsPath
       root.rescanNotes()
     }
   }
@@ -1177,7 +1186,7 @@ function toggleTask(lineNo, wasChecked) {
       root.persistState()
       root.moveOpen = false
       root.actionError = ""
-      root.noteFile.path = root.pendingAbsPath
+      noteFile.path = root.pendingAbsPath
       root.resetFocus("header")
       root.rescanNotes()
     }
@@ -1193,10 +1202,10 @@ function toggleTask(lineNo, wasChecked) {
       root.currentNote = ""
       root.pendingAbsPath = ""
       root.rawText = ""
-      root.noteView.setSource("")
+      noteView.setSource("")
       root.deleteConfirmOpen = false
       root.editMode = false
-      root.editor.text = ""
+      editor.text = ""
       root.persistState()
       root.resetFocus("header")
       root.rescanNotes()
@@ -1213,7 +1222,8 @@ function toggleTask(lineNo, wasChecked) {
     property string rel: ""
     property string body: ""
     command: ["python3", root.vaultHelper, "write", root.vaultPath, rel]
-    onStarted: write(body)
+    stdinEnabled: true
+    onStarted: { write(body); stdinEnabled = false }
     stderr: StdioCollector { id: saveErr; waitForEnd: true }
     onExited: function(exitCode) {
       root.selfWriteSeen = false
@@ -1223,10 +1233,10 @@ function toggleTask(lineNo, wasChecked) {
         root.dirty = true
         root.externalConflict = true
         root.actionMessage = root.vaultOpError(saveErr.text, "Could not save the note.")
-        root.actionMessageTimer.restart()
+        actionMessageTimer.restart()
         return
       }
-      root.noteFile.reload()
+      noteFile.reload()
     }
   }
 
@@ -1569,7 +1579,7 @@ if (event.key === Qt.Key_Space) {
               root.closeCards()
               root.quickKeysOpen = opening
               root.keyboardSection = opening ? "quickKeys" : "header"
-              root.keyCatcher.forceActiveFocus()
+              keyCatcher.forceActiveFocus()
             }
           }
         }
@@ -1793,7 +1803,7 @@ if (event.key === Qt.Key_Space) {
                 root.dropdownOpen = false; root.resetFocus("header"); event.accepted = true
               } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
                 root.keyboardSection = "search"
-                root.keyCatcher.forceActiveFocus()
+                keyCatcher.forceActiveFocus()
                 event.accepted = true
               } else root.handleShortcut(event)
             }
@@ -1881,14 +1891,14 @@ if (event.key === Qt.Key_Space) {
               }
 
               Text {
-                visible: noteRow.modelData.snippets && noteRow.modelData.snippets.length > 0
+                visible: !!(noteRow.modelData.snippets && noteRow.modelData.snippets.length > 0)
                 width: notesList.width * 0.45
                 // Vault filenames and search snippets are attacker-controlled if the vault
                 // came from a clone or a sync, and Text defaults to AutoText, which treats a
                 // string that looks like markup as rich text. That includes <img src=...>, so
                 // simply listing a note could make the long-lived shell fetch a URL of the
                 // vault author's choosing. PlainText renders it as the characters it is.
-                text: noteRow.modelData.snippets[0].text
+                text: !!(noteRow.modelData.snippets && noteRow.modelData.snippets.length > 0) ? noteRow.modelData.snippets[0].text : ""
                 textFormat: Text.PlainText
                 elide: Text.ElideRight
                 color: root.dimText
@@ -1969,10 +1979,10 @@ if (event.key === Qt.Key_Space) {
               Keys.onPressed: function(event) {
                 if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
                   root.keyboardSection = "settings"
-                  root.keyCatcher.forceActiveFocus()
+                  keyCatcher.forceActiveFocus()
                   event.accepted = true
                 } else if (event.key === Qt.Key_Escape) {
-                  root.closeCards(); root.keyboardSection = "header"; root.keyCatcher.forceActiveFocus(); event.accepted = true
+                  root.closeCards(); root.keyboardSection = "header"; keyCatcher.forceActiveFocus(); event.accepted = true
                 }
               }
             }
@@ -2092,7 +2102,7 @@ if (event.key === Qt.Key_Space) {
                 if (event.key === Qt.Key_Tab || event.key === Qt.Key_Down) {
                   createFolderGrid.forceActiveFocus(); event.accepted = true
                 } else if (event.key === Qt.Key_Escape) {
-                  root.closeCards(); root.keyboardSection = "header"; root.keyCatcher.forceActiveFocus(); event.accepted = true
+                  root.closeCards(); root.keyboardSection = "header"; keyCatcher.forceActiveFocus(); event.accepted = true
                 }
               }
             }
@@ -2489,7 +2499,7 @@ if (event.key === Qt.Key_Space) {
                   event.accepted = true
                 }
               } else if (event.key === Qt.Key_Escape) {
-                root.closeCards(); root.keyboardSection = "header"; root.keyCatcher.forceActiveFocus(); event.accepted = true
+                root.closeCards(); root.keyboardSection = "header"; keyCatcher.forceActiveFocus(); event.accepted = true
               } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
                 root.cycleKeyboardFocus(event.key === Qt.Key_Backtab ? -1 : 1)
                 event.accepted = true
