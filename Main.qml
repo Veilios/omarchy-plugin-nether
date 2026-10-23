@@ -1227,6 +1227,7 @@ function toggleTask(lineNo, wasChecked) {
     stderr: StdioCollector { id: saveErr; waitForEnd: true }
     onExited: function(exitCode) {
       root.selfWriteSeen = false
+      saveProc.running = false
       if (exitCode !== 0) {
         // Keep the edits: mark dirty again so the next autosave retries, and
         // say why rather than dropping the user's typing on the floor.
@@ -1234,6 +1235,16 @@ function toggleTask(lineNo, wasChecked) {
         root.externalConflict = true
         root.actionMessage = root.vaultOpError(saveErr.text, "Could not save the note.")
         actionMessageTimer.restart()
+        return
+      }
+      // flushSave() clears `dirty` while arming this save, and anything that
+      // edits the note while the write is in flight (task toggle, keystroke,
+      // added task) sets it again. At exit time `dirty` therefore means "there
+      // is text newer than what we just wrote", so re-arm with the latest
+      // rawText instead of reloading the stale file content and clobbering the
+      // user's newer edit.
+      if (root.dirty) {
+        root.flushSave()
         return
       }
       noteFile.reload()
