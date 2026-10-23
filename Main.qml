@@ -425,6 +425,7 @@ Panel {
     selfWriteSeen = true
     saveProc.rel = currentNote
     saveProc.body = rawText
+    console.debug("[NETHER flushSave] setting running=true, rel=" + currentNote + " bodyLen=" + rawText.length)
     saveProc.running = true
     dirty = false
     console.debug("[NETHER flushSave] armed saveProc for rel=" + currentNote + " bodyLen=" + rawText.length)
@@ -1231,7 +1232,14 @@ function toggleTask(lineNo, wasChecked) {
     property string body: ""
     command: ["python3", root.vaultHelper, "write", root.vaultPath, rel]
     stdinEnabled: true
-    onStarted: { write(body); stdinEnabled = false }
+    onStarted: {
+      console.debug("[NETHER saveProc.onStarted] stdinEnabled=" + stdinEnabled + " bodyLen=" + body.length)
+      write(body)
+      stdinEnabled = false
+    }
+    onRunningChanged: {
+      console.debug("[NETHER saveProc.runningChanged] running=" + running)
+    }
     stderr: StdioCollector { id: saveErr; waitForEnd: true }
     onExited: function(exitCode) {
       console.debug("[NETHER saveProc.onExited] entry: exitCode=" + exitCode + " dirty=" + root.dirty + " selfWriteSeen=" + root.selfWriteSeen + " running=" + saveProc.running)
