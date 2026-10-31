@@ -425,6 +425,11 @@ Panel {
     selfWriteSeen = true
     saveProc.rel = currentNote
     saveProc.body = rawText
+    // stdinEnabled is a persistent property: onStarted flips it to false to
+    // close the child's stdin after the body is written. It must be switched
+    // back on before every restart, or the next helper blocks in _read_stdin()
+    // forever waiting for EOF and the save never exits.
+    saveProc.stdinEnabled = true
     console.debug("[NETHER flushSave] setting running=true, rel=" + currentNote + " bodyLen=" + rawText.length)
     saveProc.running = true
     dirty = false
@@ -505,6 +510,9 @@ Panel {
     createProc.rel = rel
     createProc.body = ""
     resetFocus("header")
+    // stdinEnabled stays false after onStarted closes stdin; re-enable it so
+    // the next create does not block forever in the helper's _read_stdin().
+    createProc.stdinEnabled = true
     createProc.running = true
   }
 
