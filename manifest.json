@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "veilios.nether",
   "name": "Nether",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "author": "veilios",
   "license": "MIT",
   "description": "Obsidian vault notes in your Omarchy bar. Read, edit, search, and manage Markdown notes without leaving your desktop.\n\nFeatures\nBar widget — Open your notes from the bar panel\nFull Markdown rendering — Headers, lists, code, blockquotes, tables, tasks\nVault folder navigation — Create, move, and organize notes\nSearch — Fuzzy search note names and content (Ctrl+S)\nAuto-save — Edits persist instantly; read-only on switch\nKeyboard support — mostly navigable with just the keyboard, as dhh intended",

@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.2] - 2026-10-03
+
+### Fixed
+- **Writes were all broken by one line** — `Main.qml` built `vaultHelper`
+  with `Qt.resolvedUrl(...).toLocalFile()`, which throws in Quickshell, so the
+  helper path was `""` and every mutation ran as `python3 "" ...`. Create and
+  delete surfaced the `__main__` error, rename/move were dead, and autosave
+  lost every edit silently (checkbox and task edits appeared to apply, then
+  reverted on the note switch). The path is now built with the
+  `String(...).replace(/^file:\/\//, "")` idiom the rest of the shell uses.
+- **Content search never returned snippets** — `contentMatches[rel]` was never
+  initialized, so the first record threw inside the parse loop and no matches
+  were kept. It is now initialized when a file first matches.
+- **Results died at the 30-file cap** — once the file limit was reached the
+  loop `continue`d before initializing the array, so the length check threw;
+  affected files were silently dropped.
+- **Search-result rows could crash the delegate** — a name row promoted to
+  "both" had `matchType` and `snippets` assigned in place without reassigning
+  the row, so the `snippets[0]` binding was evaluated while `snippets` was
+  undefined. Rows are now replaced wholesale, and the snippet text binding
+  guards on `snippets` being a non-empty array before indexing.
+- **New `tests/test_helper_path.py` static guard** catches the broken
+  `.toLocalFile()` idiom and unguarded helper-backed `Process` blocks in CI.
+
 ## [1.2.1] - 2026-09-29
 
 ### Security

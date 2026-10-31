@@ -26,6 +26,12 @@ jobs:
       - name: Check untrusted text is not rendered as rich text
         run: python3 tests/test_untrusted_text.py
 
+      - name: Check for silent helper-path failures
+        run: python3 tests/test_helper_path.py
+
+      - name: Check the stdin write/close contract with the helper
+        run: python3 tests/test_stdin_contract.py
+
       - name: Validate plugin manifest
         run: |
           python3 - <<'PY'
