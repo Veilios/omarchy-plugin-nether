@@ -462,7 +462,7 @@ Item {
       selectionColor: Color.menu.selectedBackground
       selectedTextColor: root.bodyText
 
-      Keys.onReturnPressed: {
+      Keys.onReturnPressed: function(event) {
         if (event.modifiers & Qt.ShiftModifier) {
           event.accepted = false
         } else {
