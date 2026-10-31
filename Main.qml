@@ -411,14 +411,10 @@ Panel {
   function flushSave() {
     saveTimer.stop()
     if (!dirty || currentNote === "" || pendingAbsPath === "") {
-      console.debug("[NETHER flushSave] skipping: dirty=" + dirty + " currentNote=" + currentNote + " pendingAbsPath=" + pendingAbsPath)
       dirty = false
       return
     }
-    if (saveProc.running) {
-      console.debug("[NETHER flushSave] saveProc already running, skipping")
-      return // a save is already carrying this note's text
-    }
+    if (saveProc.running) return // a save is already carrying this note's text
     lastKnownFileText = rawText
     // Our own write will show up on the watcher; flag it so handleExternalChange
     // does not mistake it for somebody else editing the note.
@@ -430,10 +426,8 @@ Panel {
     // back on before every restart, or the next helper blocks in _read_stdin()
     // forever waiting for EOF and the save never exits.
     saveProc.stdinEnabled = true
-    console.debug("[NETHER flushSave] setting running=true, rel=" + currentNote + " bodyLen=" + rawText.length)
     saveProc.running = true
     dirty = false
-    console.debug("[NETHER flushSave] armed saveProc for rel=" + currentNote + " bodyLen=" + rawText.length)
   }
 
   function setEditMode(on) {
@@ -607,13 +601,11 @@ Panel {
   }
 
   function handleExternalChange() {
-    console.debug("[NETHER handleExternalChange] entry: loadingNote=" + loadingNote + " pendingAbsPath=" + pendingAbsPath + " noteFile.path=" + noteFile.path + " selfWriteSeen=" + selfWriteSeen + " dirty=" + dirty)
     if (loadingNote || pendingAbsPath === "") return
     if (noteFile.path !== pendingAbsPath) return
     if (selfWriteSeen) {
       // Our own autosave landing. Nothing to reconcile.
       selfWriteSeen = false
-      console.debug("[NETHER handleExternalChange] selfWriteSeen path, reloading")
       noteFile.reload()
       return
     }
@@ -629,7 +621,6 @@ Panel {
       actionMessageTimer.restart()
       return
     }
-    console.debug("[NETHER handleExternalChange] external reload (no dirty)")
     noteFile.reload()
   }
 
@@ -1241,20 +1232,14 @@ function toggleTask(lineNo, wasChecked) {
     command: ["python3", root.vaultHelper, "write", root.vaultPath, rel]
     stdinEnabled: true
     onStarted: {
-      console.debug("[NETHER saveProc.onStarted] stdinEnabled=" + stdinEnabled + " bodyLen=" + body.length)
       write(body)
       stdinEnabled = false
     }
-    onRunningChanged: {
-      console.debug("[NETHER saveProc.runningChanged] running=" + running)
-    }
     stderr: StdioCollector { id: saveErr; waitForEnd: true }
     onExited: function(exitCode) {
-      console.debug("[NETHER saveProc.onExited] entry: exitCode=" + exitCode + " dirty=" + root.dirty + " selfWriteSeen=" + root.selfWriteSeen + " running=" + saveProc.running)
       root.selfWriteSeen = false
       saveProc.running = false
       if (exitCode !== 0) {
-        console.debug("[NETHER saveProc.onExited] ERROR: exitCode=" + exitCode + " stderr=" + saveErr.text)
         // Keep the edits: mark dirty again so the next autosave retries, and
         // say why rather than dropping the user's typing on the floor.
         root.dirty = true
@@ -1263,7 +1248,6 @@ function toggleTask(lineNo, wasChecked) {
         actionMessageTimer.restart()
         return
       }
-      console.debug("[NETHER saveProc.onExited] SUCCESS, dirty=" + root.dirty)
       // flushSave() clears `dirty` while arming this save, and anything that
       // edits the note while the write is in flight (task toggle, keystroke,
       // added task) sets it again. At exit time `dirty` therefore means "there
@@ -1271,7 +1255,6 @@ function toggleTask(lineNo, wasChecked) {
       // rawText instead of reloading the stale file content and clobbering the
       // user's newer edit.
       if (root.dirty) {
-        console.debug("[NETHER saveProc.onExited] dirty set during write, re-arming")
         root.flushSave()
         return
       }
